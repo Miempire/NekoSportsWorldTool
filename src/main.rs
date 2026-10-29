@@ -39,7 +39,7 @@ fn run_gui() {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([880.0, 720.0])
-            .with_title("NekoSportsWorldTool"),
+            .with_title("RE-NKSWT(miempire修改版)"),
         ..Default::default()
     };
     let result = nekosportsworldtool::run_gui(options);

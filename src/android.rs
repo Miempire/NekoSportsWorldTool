@@ -34,7 +34,7 @@ fn android_main(app: AndroidApp) {
     let options = eframe::NativeOptions {
         run_and_return: false,
         event_loop_builder: Some(Box::new(move |builder| { builder.with_android_app(app); })),
-        viewport: egui::ViewportBuilder::default().with_title("NekoSportsWorldTool"),
+        viewport: egui::ViewportBuilder::default().with_title("RE-NKSWT(miempire修改版)"),
         ..Default::default()
     };
     if let Err(error) = crate::run_gui(options) {

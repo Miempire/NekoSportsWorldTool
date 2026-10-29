@@ -118,7 +118,7 @@ pub fn build(
         dips.push((
             rng.uniform(0.15, 0.75) * dur_f,
             rng.uniform(25.0, 55.0),
-            rng.uniform(0.08, 0.16),
+            rng.uniform(0.05, 0.11),
         ));
     }
     let dip_factor = |t: f64| -> f64 {
@@ -136,10 +136,11 @@ pub fn build(
         rng.uniform(38.0, 56.0),
         rng.uniform(15.0, 23.0),
     );
+    // 幅度收敛在 ±2% 量级：保留长/中/短三档起伏的形状，不再叠加出过大的配速方差
     let (wa1, wa2, wa3) = (
-        rng.uniform(0.006, 0.016),
-        rng.uniform(0.020, 0.045),
-        rng.uniform(0.008, 0.022),
+        rng.uniform(0.002, 0.006),
+        rng.uniform(0.008, 0.018),
+        rng.uniform(0.003, 0.008),
     );
     let fat0 = rng.uniform(1.00, 1.06);
     let fat_slope = rng.uniform(0.04, 0.08);
@@ -177,8 +178,8 @@ pub fn build(
         ceil: v_hi,
         caps,
         mean_mul: mean_mul.clone(),
-        theta: 0.12,
-        sigma: 0.02,
+        theta: 0.15,
+        sigma: 0.010,
         accel: 0.55,
         decel: 0.45,
         response: 0.45,

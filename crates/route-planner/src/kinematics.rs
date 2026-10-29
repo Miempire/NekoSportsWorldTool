@@ -31,8 +31,8 @@ impl Default for KinParams {
             brake_max: 1.5,
             lookahead_m: 40.0,
             warmup_s: 20.0,
-            theta: 0.12,
-            sigma: 0.06,
+            theta: 0.15,
+            sigma: 0.02,
         }
     }
 }

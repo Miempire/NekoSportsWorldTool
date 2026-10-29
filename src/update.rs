@@ -1,15 +1,13 @@
 //! 自动更新：GitHub Release 检查 / 下载 / 解包 / 自替换。
 //!
-//! 桌面产物（win zip / mac tar.gz / linux tar.gz ×2）只查上游仓库；
-//! Android 查上游 + fork 两个仓库（上游发 APK 前先落在 fork，发了则
-//! 自动取更新的那个），取带 APK 资产且版本最新的 Release。
+//! 更新源自本修改版自己的仓库（桌面 / Android 同一仓库）：
+//! 取带对应平台资产且版本最新的 Release。
 //! NSWT_UPDATE_REPO 环境变量可强制指定仓库（测试用）。
 //! 版本号 / 重启 / 安装的平台差异见 platform.rs。
 
 use crate::api::client::{make_agent, ureq_err};
 
-pub const REPO_UPSTREAM: &str = "YanamiNeko/NekoSportsWorldTool";
-pub const REPO_FORK: &str = "hb-degithub/NekoSportsWorldTool";
+pub const REPO_UPSTREAM: &str = "Miempire/NekoSportsWorldTool";
 
 const UA: &str = concat!("NekoSportsWorldTool/", env!("CARGO_PKG_VERSION"));
 
@@ -23,9 +21,6 @@ fn repos() -> Vec<String> {
             return vec![r.trim().to_string()];
         }
     }
-    #[cfg(target_os = "android")]
-    let list = [REPO_UPSTREAM, REPO_FORK];
-    #[cfg(not(target_os = "android"))]
     let list = [REPO_UPSTREAM];
     list.iter().map(|s| s.to_string()).collect()
 }

@@ -16,7 +16,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidateRange(1, 99)][int]$AndroidRev,
-    [string]$Repo = 'hb-degithub/NekoSportsWorldTool',
+    [string]$Repo = 'Miempire/NekoSportsWorldTool',
     [string]$Notes = '',
     [switch]$Draft,
     [switch]$SkipBuild

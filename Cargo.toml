@@ -1,10 +1,10 @@
 [package]
 name = "nekosportsworldtool"
-version = "0.3.0"
+version = "0.5.0"
 edition = "2021"
 description = "NekoSportsWorldTool：运动世界校园版协议自动化工具（GUI + CLI）"
 license = "CC-BY-NC-4.0"
-repository = "https://github.com/YanamiNeko/NekoSportsWorldTool"
+repository = "https://github.com/Miempire/NekoSportsWorldTool"
 
 [workspace]
 members = [".", "crates/route-planner"]
