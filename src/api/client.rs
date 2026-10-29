@@ -70,7 +70,7 @@ impl ApiClient {
         let mut req = self.agent.request(method, url);
         req = req.set("Content-Type", "application/json; charset=utf-8");
         req = req.set("User-Agent", ua);
-        req = req.set("appVersion", "7.3.40");
+        req = req.set("appVersion", "7.3.91");
         req = req.set("headerSign", &header_env.json);
         for (k, v) in extra_headers {
             req = req.set(k, v);
