@@ -485,6 +485,7 @@ impl App {
         if self.run_page.route_mode == RouteMode::Road && prev_route != RouteMode::Road {
             self.refresh_fence();
             self.refresh_points();
+            self.refresh_policy();
         }
         if self.run_page.route_mode == RouteMode::Track && prev_route != RouteMode::Track {
             self.refresh_fence();
@@ -617,9 +618,11 @@ impl App {
                 let pts_bd = crate::api::points::points_bd(&pts);
                 if !pts_bd.is_empty() {
                     let fences = crate::api::model::load_fence_cache().unwrap_or_default();
+                    let must = self.run_page.must_points.clone();
                     match crate::track::generate_road::plan_road_view(
                         &net,
                         &pts_bd,
+                        &must,
                         plan.dist * 1000.0,
                         plan.seed,
                         &fences,
@@ -824,11 +827,10 @@ impl App {
         } else {
             None
         };
-        let must_wo_start: Vec<(f64, f64)> = must.iter().skip(1).copied().collect();
         let res = crate::track::generate_road::plan_track_view(
             &net,
             &pts_bd,
-            &must_wo_start,
+            &must,
             plan.dist * 1000.0,
             plan.seed,
             &fences,

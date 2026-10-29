@@ -133,9 +133,9 @@ impl App {
         });
     }
 
-    /// 后台拉取跑步策略（必经点），供跑道预览与确认失效判定使用。
+    /// 后台拉取跑步策略（必经点），供道路/跑道预览与确认失效判定使用。
     pub(crate) fn refresh_policy(&self) {
-        if self.run_page.route_mode != RouteMode::Track {
+        if self.run_page.route_mode == RouteMode::Legacy {
             return;
         }
         let Some(session) = self.session.clone() else {

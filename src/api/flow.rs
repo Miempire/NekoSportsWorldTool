@@ -85,32 +85,20 @@ pub fn run_full_flow(
     // ③ 轨迹生成（必经点 + 打卡点）
     let pts_bd = points::points_bd(&pts);
     // 必经点保持策略顺序置于前端（waypoints[0] 即起点），剩余打卡点去重后按质心角
-    // 排序，使环序自然且不破坏必经点顺序。
-    let mut route_pts: Vec<(f64, f64)> = pol.must_points.clone();
-    let mut free: Vec<(f64, f64)> = Vec::new();
-    for p in &pts_bd {
-        if !route_pts
-            .iter()
-            .any(|q| (q.0 - p.0).abs() < 1e-6 && (q.1 - p.1).abs() < 1e-6)
-        {
-            free.push(*p);
-        }
-    }
-    if !free.is_empty() {
-        route_pts.extend(crate::track::generate_road::radial_order(&free));
-    }
+    // 排序；道路模式下两者都作为「必须经过」的硬约束。
+    let route_pts = crate::track::generate_road::merge_route_points(&pts_bd, &pol.must_points);
     if !pol.must_points.is_empty() {
         log(&format!(
             "√ [policy] 必经点 {} 个（保持顺序），合并后路线 waypoint 共 {} 个",
             pol.must_points.len(),
             route_pts.len()
         ));
-        // 防御性日志：must_points 的「首个=起点」语义未经证实（提交时 skip(1) 依赖此假设），
-        // 逐点打印便于抓真实响应核对，避免首个必经点被静默丢弃。
+        // 逐点打印，便于与响应/轨迹核对：所有 must_points 都作为强制必经点，
+        // 与起点重合的首点由路由层投影去重，不再被跳过。
         for (i, &(mlat, mlon)) in pol.must_points.iter().enumerate() {
             log(&format!(
                 "  [policy] must_points[{i}] BD=({mlat:.6},{mlon:.6}){}",
-                if i == 0 { "（假设为起点）" } else { "（必经点）" }
+                if i == 0 { "（首个，若与起点重合则去重）" } else { "（必经点）" }
             ));
         }
     } else {
@@ -168,16 +156,8 @@ pub fn run_full_flow(
         RouteMode::Road => {
             let cfg = crate::api::model::load_config();
             if cfg.osm_path.is_empty() {
-                log("⚠ [track] 未配置 OSM 路网，回退经典算法");
-                gen_track(
-                    params.dist,
-                    params.dur,
-                    params.seed,
-                    (anchor.latitude, anchor.longitude),
-                    start_ms,
-                    &pts_bd,
-                )?
-            } else {
+                return Err("道路模式需要 OSM 路网，请先在「路网」页加载（回退会丢掉必经点）".into());
+            }
                 match crate::track::generate_road::load_network_path(&cfg.osm_path) {
                     Ok(mut net) => {
                         crate::track::generate_road::align_network(&mut net);
@@ -201,9 +181,8 @@ pub fn run_full_flow(
                         } else if dropped > 0 {
                             log(&format!("√ [track] 建筑避让：移除 {dropped} 条穿楼边"));
                         }
-                        // 强制必经点（不含起点）：其余打卡点仅软引导 + <40m 吸附
-                        let must_bd: Vec<(f64, f64)> =
-                            pol.must_points.iter().skip(1).copied().collect();
+                        // 强制经过：必经点 + 打卡点全部作为硬约束（与预览同口径）
+                        let must_bd: Vec<(f64, f64)> = route_pts.clone();
                         match crate::track::generate_road::build_road(
                             params.dist,
                             params.dur,
@@ -220,6 +199,7 @@ pub fn run_full_flow(
                                     filtered.buildings.len(),
                                     fences.len()
                                 ));
+                                log_must_coverage(log, &t, &must_bd);
                                 let report = crate::track::check::check(
                                     &t,
                                     &filtered.buildings,
@@ -232,31 +212,13 @@ pub fn run_full_flow(
                                 }
                                 t
                             }
+                            // 道路模式拒绝静默回退：回退会丢掉必经点，必须让用户修正路网/围栏
                             Err(e) => {
-                                log(&format!("⚠ [track] 道路路由失败，回退经典算法: {e}"));
-                                gen_track(
-                                    params.dist,
-                                    params.dur,
-                                    params.seed,
-                                    (anchor.latitude, anchor.longitude),
-                                    start_ms,
-                                    &pts_bd,
-                                )?
+                                return Err(format!("道路模式生成失败（必经点不可达/断路/自交）：{e}"))
                             }
                         }
                     }
-                    Err(e) => {
-                        log(&format!("⚠ [track] 路网加载失败，回退经典算法: {e}"));
-                        gen_track(
-                            params.dist,
-                            params.dur,
-                            params.seed,
-                            (anchor.latitude, anchor.longitude),
-                            start_ms,
-                            &pts_bd,
-                        )?
-                    }
-                }
+                    Err(e) => return Err(format!("路网加载失败：{e}")),
             }
         }
         RouteMode::Track => {
@@ -281,7 +243,8 @@ pub fn run_full_flow(
                 }
             };
             let fenced = crate::track::generate_road::apply_fences(&net, &fences);
-            let must_bd: Vec<(f64, f64)> = pol.must_points.iter().skip(1).copied().collect();
+            // 同上：全部必经点强制经过，起点重合点由 plan_track_route 去重
+            let must_bd: Vec<(f64, f64)> = pol.must_points.clone();
             match crate::track::generate_road::build_track(
                 params.dist,
                 params.dur,
@@ -299,6 +262,7 @@ pub fn run_full_flow(
                         fenced.buildings.len(),
                         fences.len()
                     ));
+                    log_must_coverage(log, &t, &must_bd);
                     let report = crate::track::check::check(
                         &t,
                         &fenced.buildings,
@@ -459,3 +423,20 @@ use chrono::TimeZone as _;
 
 /// 最近一次详情验证的完整响应（达标判定明细在 reasonList）。
 pub static VERIFY_DETAIL: std::sync::Mutex<Option<Value>> = std::sync::Mutex::new(None);
+
+/// 日志输出每个必经点到轨迹的最近距离（米），用于核对「必达」。
+fn log_must_coverage(
+    log: &mut dyn FnMut(&str),
+    t: &crate::track::model::Track,
+    must: &[(f64, f64)],
+) {
+    if must.is_empty() {
+        return;
+    }
+    let cov = crate::track::generate_road::must_coverage(t, must);
+    let text: Vec<String> = cov.iter().map(|d| format!("{d:.0}m")).collect();
+    log(&format!(
+        "√ [track] 必经点覆盖（最近距离）: {}",
+        text.join(" / ")
+    ));
+}

@@ -118,10 +118,12 @@ fn edge_inside(polys: &[Vec<Coord>], a: Coord, b: Coord) -> bool {
 
 /// 生成路网预览（对齐 + 围栏裁剪 + 闭环路由），不产生协议字段。
 ///
-/// 预览阶段拿不到 policy 必经点，故仅做「软引导 + 吸附」，不强制经过任何打卡点。
+/// 必经点（policy，按序）与打卡点**全部强制经过**，与提交时的路由口径一致：
+/// 任一点不可达会直接返回 `Err`，而不是静默跳过。
 pub fn plan_road_view(
     net: &RoadGraph,
     points_bd: &[(f64, f64)],
+    must_bd: &[(f64, f64)],
     dist: f64,
     seed: u64,
     fences: &[Vec<(f64, f64)>],
@@ -130,10 +132,12 @@ pub fn plan_road_view(
     align_network(&mut g);
     g = apply_fences(&g, fences);
     g = apply_obstacles(&g).0;
-    let ordered = radial_order(points_bd);
+    let ordered = merge_route_points(points_bd, must_bd);
     let waypoints: Vec<Coord> = ordered.iter().map(|p| Coord::new(p.1, p.0)).collect();
+    // 与提交一致：所有路线点（必经点 + 打卡点）都是硬约束
+    let must: Vec<Coord> = ordered.iter().map(|p| Coord::new(p.1, p.0)).collect();
     let opts = RouteOptions::default();
-    let route = plan_route_split(&g, &waypoints, &[], dist, seed, &opts)?;
+    let route = plan_route_split(&g, &waypoints, &must, dist, seed, &opts)?;
     let route_pts: Vec<(f64, f64)> = route.points.iter().map(|p| (p.lat, p.lon)).collect();
     let building_hits = route
         .points
@@ -165,6 +169,24 @@ pub fn plan_road_view(
         fences: fences.to_vec(),
         building_hits,
     })
+}
+
+/// 必经点覆盖：返回每个必经点到轨迹最近点的距离（米），供日志核对「必达」。
+pub fn must_coverage(track: &Track, must_bd: &[(f64, f64)]) -> Vec<f64> {
+    must_bd
+        .iter()
+        .map(|&(mlat, mlon)| {
+            track
+                .locations
+                .iter()
+                .map(|p| {
+                    let dx = (p.lat - mlat) * MET_PER_DEG_LAT;
+                    let dy = (p.lng - mlon) * MET_PER_DEG_LNG;
+                    (dx * dx + dy * dy).sqrt()
+                })
+                .fold(f64::INFINITY, f64::min)
+        })
+        .collect()
 }
 
 /// 将 WGS84 路网逐节点转换为 BD-09（与打卡点同系）。
@@ -210,6 +232,24 @@ pub fn radial_order(points_bd: &[(f64, f64)]) -> Vec<(f64, f64)> {
             .unwrap()
     });
     ordered
+}
+
+/// 合并路线点：必经点（按策略顺序）在前，其余打卡点去重后按质心角排序在后。
+/// 用于道路模式预览与提交共用同一份顺序，避免两处口径分叉。
+pub fn merge_route_points(
+    points_bd: &[(f64, f64)],
+    must_bd: &[(f64, f64)],
+) -> Vec<(f64, f64)> {
+    let mut out = must_bd.to_vec();
+    let free: Vec<(f64, f64)> = points_bd
+        .iter()
+        .copied()
+        .filter(|p| !out.iter().any(|q| (q.0 - p.0).abs() < 1e-6 && (q.1 - p.1).abs() < 1e-6))
+        .collect();
+    if !free.is_empty() {
+        out.extend(radial_order(&free));
+    }
+    out
 }
 
 /// 路线 → 平面折线 + 弧长表。
