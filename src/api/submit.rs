@@ -7,7 +7,7 @@ use crate::crypto::decrypt::{decrypt_response, derive_paes_key};
 use crate::crypto::envelope::{
     build_envelope, build_envelope_ts, rsa_public_key, OuterOrder,
 };
-use crate::crypto::header::{build_android_header, HeaderIdentity, UA_ANDROID};
+use crate::crypto::header::{build_android_header, HeaderIdentity, ANDROID_APP_VERSION, UA_ANDROID};
 use crate::crypto::sign::{original_sign, signature};
 use crate::track::calorie::{avg_power, official_kcal};
 use crate::track::geom::round_to;
@@ -202,7 +202,7 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
     req = req
         .set("Content-Type", "application/json; charset=utf-8")
         .set("User-Agent", UA_ANDROID)
-        .set("appVersion", "7.3.40")
+        .set("appVersion", ANDROID_APP_VERSION)
         .set("headerSign", &header_env.json)
         .set("runes", &runes)
         .set("runef", &runef);

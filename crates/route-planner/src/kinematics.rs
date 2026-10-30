@@ -37,14 +37,34 @@ impl Default for KinParams {
     }
 }
 
+/// 路线首尾是否重合（闭环）。路网闭环路由的首尾坐标一致。
+fn route_is_closed(route: &Route) -> bool {
+    let (first, last) = match (route.points.first(), route.points.last()) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return false,
+    };
+    let dlat = (first.lat - last.lat) * 110_540.0;
+    let dlon = (first.lon - last.lon) * 111_320.0 * first.lat.to_radians().cos().abs();
+    (dlat * dlat + dlon * dlon).sqrt() <= 3.0
+}
+
 /// 从弧长 s 出发，在 lookahead 范围内取最小的「可刹停速度」。
 ///
 /// 对每个前方曲率限速 v_corner(q)（距离 d=q.s-s），当前速度最多允许
 /// `sqrt(v_corner² + 2·b·d)`，取所有候选的最小值。
 pub fn speed_limit_ahead(route: &Route, s: f64, p: &KinParams) -> f64 {
+    speed_limit_ahead_inner(route, s, p, route_is_closed(route))
+}
+
+/// 闭环路线把「后方」点折算到下一圈，避免终点附近看不到起点后的弯道。
+fn speed_limit_ahead_inner(route: &Route, s: f64, p: &KinParams, closed: bool) -> f64 {
+    let total = route.length_m;
     let mut v_max = f64::INFINITY;
     for pt in &route.points {
-        let d = pt.s - s;
+        let mut d = pt.s - s;
+        if d <= 0.0 && closed && total > 0.0 {
+            d += total;
+        }
         if d <= 0.0 || d > p.lookahead_m {
             continue;
         }
@@ -73,12 +93,32 @@ pub fn pace_profile(
     floor: f64,
     ceil: f64,
 ) -> Result<Vec<f64>, String> {
+    pace_profile_with_mul(route, v0, dts, target_dist, seed, p, floor, ceil, &[])
+}
+
+/// 与 `pace_profile` 相同，但可传入逐点均值倍率（疲劳/波动/坡度）。
+/// `mean_mul` 为空表示全 1；非空时长度必须等于 `dts.len()`。
+pub fn pace_profile_with_mul(
+    route: &Route,
+    v0: f64,
+    dts: &[f64],
+    target_dist: f64,
+    seed: u64,
+    p: &KinParams,
+    floor: f64,
+    ceil: f64,
+    mean_mul: &[f64],
+) -> Result<Vec<f64>, String> {
     use crate::profile::{correlated_speed_profile, SpeedSpec};
 
     let n = dts.len();
     if n < 2 {
         return Err("速度剖面的时间轴过短".into());
     }
+    if !mean_mul.is_empty() && mean_mul.len() != n {
+        return Err("均值倍率序列长度与时间轴不一致".into());
+    }
+    let closed = route_is_closed(route);
 
     // 初估弧长：以基础配速匀速推进，用于第一轮弯道限速
     let mut s_of = vec![0.0f64; n];
@@ -94,7 +134,7 @@ pub fn pace_profile(
     for round in 0..3 {
         let caps: Vec<f64> = (0..n)
             .map(|i| {
-                let raw = speed_limit_ahead(route, s_of[i], p);
+                let raw = speed_limit_ahead_inner(route, s_of[i], p, closed);
                 if raw.is_finite() {
                     raw.clamp(floor, ceil)
                 } else {
@@ -109,7 +149,7 @@ pub fn pace_profile(
             floor,
             ceil,
             caps,
-            mean_mul: Vec::new(),
+            mean_mul: mean_mul.to_vec(),
             theta: p.theta,
             sigma: p.sigma,
             accel: 0.55,
@@ -119,7 +159,7 @@ pub fn pace_profile(
             warmup_frac: 0.85,
             tail_s: 12.0,
             tail_frac: 0.90,
-            seed: seed ^ (round as u64) * 0x9E37_79B9,
+            seed: seed ^ ((round as u64) * 0x9E37_79B9),
         };
         speeds = correlated_speed_profile(&spec)?;
         let mut acc = 0.0;

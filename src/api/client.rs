@@ -8,7 +8,7 @@ use crate::crypto::decrypt::{decrypt_response, derive_paes_key, Decrypted};
 use crate::crypto::envelope::{
     build_envelope, build_envelope_ts, rsa_public_key, EnvelopeSession, OuterOrder,
 };
-use crate::crypto::header::{build_header_for, HeaderIdentity, UA_IOS};
+use crate::crypto::header::{build_header_for, HeaderIdentity, IOS_APP_VERSION, UA_IOS};
 
 pub fn make_agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
@@ -70,7 +70,7 @@ impl ApiClient {
         let mut req = self.agent.request(method, url);
         req = req.set("Content-Type", "application/json; charset=utf-8");
         req = req.set("User-Agent", ua);
-        req = req.set("appVersion", "7.3.91");
+        req = req.set("appVersion", IOS_APP_VERSION);
         req = req.set("headerSign", &header_env.json);
         for (k, v) in extra_headers {
             req = req.set(k, v);

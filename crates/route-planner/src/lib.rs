@@ -27,7 +27,7 @@ pub use biomech::{cadence_for, fatigue_from_km, gait, ou_cadence_series, speed_f
 pub use graph::{
     point_in_polygon, segment_intersects_polygon, segments_intersect, Coord, RoadGraph, TrackWay,
 };
-pub use kinematics::{pace_profile, speed_limit_ahead, KinParams};
+pub use kinematics::{pace_profile, pace_profile_with_mul, speed_limit_ahead, KinParams};
 pub use load::{load_osm, parse_osm};
 pub use noise::{ar1_xy, GpsJitter};
 pub use profile::{

@@ -7,11 +7,11 @@ use super::envelope::{md5_hex, now_ms};
 /// tokenSign 固定后缀（与 Android 签名盐同源）。
 pub const TOKEN_SIGN_SUFFIX: &str = "2slhe02lsfiwowlcixisla_sls-_slaor";
 
-pub const IOS_APP_VERSION: &str = "7.3.40";
-pub const ANDROID_APP_VERSION: &str = "7.3.70";
+pub const IOS_APP_VERSION: &str = "7.3.91";
+pub const ANDROID_APP_VERSION: &str = "7.3.91";
 
-pub const UA_IOS: &str = "SWCampus/7.3.40 (iPhone; iOS 18.1; Scale/3.00)";
-pub const UA_ANDROID: &str = "Mozilla/5.0 (Linux; Android 14; 22081212C Build/UKQ1.231003.002) AppleWebKit/537.36 SWCampus/7.3.70";
+pub const UA_IOS: &str = "SWCampus/7.3.91 (iPhone; iOS 18.1; Scale/3.00)";
+pub const UA_ANDROID: &str = "Mozilla/5.0 (Linux; Android 14; 22081212C Build/UKQ1.231003.002) AppleWebKit/537.36 SWCampus/7.3.91";
 
 /// 设备身份。app_install_time <= 0 表示尚未生成。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -305,7 +305,7 @@ mod tests {
         let (json, _) = build_android_header(&identity, 42, "TK", Some(1788958186123));
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["osType"], "0");
-        assert_eq!(v["appVersion"], "7.3.70");
+        assert_eq!(v["appVersion"], ANDROID_APP_VERSION);
         assert_eq!(v["studentId"], 42);
         assert!(v.get("tokenSign").is_some());
         assert!(json.starts_with("{\"Accept\":\"application/json\""));

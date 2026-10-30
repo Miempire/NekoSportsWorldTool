@@ -142,9 +142,11 @@ pub fn build(
         rng.uniform(0.008, 0.018),
         rng.uniform(0.003, 0.008),
     );
-    let fat0 = rng.uniform(1.00, 1.06);
-    let fat_slope = rng.uniform(0.04, 0.08);
-    let fat_min = rng.uniform(0.76, 0.86);
+    // 疲劳降速：5km 内相对起点约 -4~-9%，长距离收敛到 fat_min（相对 fat0 下降 3~10%）；
+    // 不再出现前半程 +10%、后半程 -20% 的强正分段。
+    let fat0 = rng.uniform(1.00, 1.04);
+    let fat_slope = rng.uniform(0.010, 0.020);
+    let fat_min = rng.uniform(0.94, 0.97);
     let base = dist / dur_f;
     // 速度均值倍率：热身 ramp × 疲劳 × 三正弦波动 × 余弦凹陷（不含白噪声，
     // 随机部分统一由 profile 的相关目标 + 一阶响应给出）

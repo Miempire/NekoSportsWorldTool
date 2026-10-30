@@ -1,8 +1,9 @@
 //! 目标-响应速度/步频合成（单一累计数据源）。
 //!
 //! 链路：单一时间轴 → 相关随机目标（OU 均值回归）→ 一阶平滑响应
-//! （受加速度/减速度上限、逐点弯道限速 cap 约束）→ 速度积分得距离、
-//! 步频积分得步数；10s 窗 / 60s 段 / 圈全部由同一份累计序列插值派生。
+//! （受加速度/减速度上限约束，逐点弯道限速 cap 为软约束：超限时按减速度
+//! 上限收敛，不做瞬时硬压）→ 速度积分得距离、步频积分得步数；
+//! 10s 窗 / 60s 段 / 圈全部由同一份累计序列插值派生。
 //!
 //! 与旧实现的差别：
 //! - 不再用等比缩放硬凑距离（那会静默改写物理加速度）；
@@ -157,7 +158,9 @@ pub fn correlated_speed_profile(spec: &SpeedSpec) -> Result<Vec<f64>, String> {
                 let dt = spec.dts[i].max(0.0);
                 let dv = (spec.response * (want - v))
                     .clamp(-spec.decel * dt, spec.accel * dt);
-                v = (v + dv).clamp(spec.floor, hi);
+                // 只服从加减速度上限，不在响应后再硬压上限：弯道 cap 由前瞻刹车
+                // 保证可达，瞬时硬压会违反减速度上限并在急弯处制造速度跳变。
+                v = (v + dv).max(spec.floor);
             }
             out.push(v);
             dist += v * spec.dts[i].max(0.0);

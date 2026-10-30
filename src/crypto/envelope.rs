@@ -1,4 +1,4 @@
-//! NetSecKit 信封加密（iOS 7.3.40 请求链）。
+//! NetSecKit 信封加密（iOS 请求链）。
 //!
 //! - keyDataOne = "com.wanhang.school" 末 12 字符
 //! - keyDataTwo = "5K0E8400-E29B-11D4-A716-4G6RW65G544F" 前 12 字符

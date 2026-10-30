@@ -18,8 +18,8 @@ use route_planner::profile::{
     correlated_cadence_profile, cumulative, time_grid, windows_from_cum, CadenceSpec,
 };
 use route_planner::{
-    fatigue_from_km, pace_profile, plan_route_split, point_in_polygon, segment_intersects_polygon,
-    Coord, GpsJitter, KinParams, RoadGraph, Route, RouteOptions, Sdf,
+    fatigue_from_km, pace_profile_with_mul, plan_route_split, point_in_polygon,
+    segment_intersects_polygon, Coord, GpsJitter, KinParams, RoadGraph, Route, RouteOptions, Sdf,
 };
 
 /// 路线算法模式（三选一）。
@@ -476,9 +476,67 @@ fn build_from_route(
         ..Default::default()
     };
     let speed_seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    // 均值倍率：疲劳 × 三正弦波动（与经典模式同口径；热身/收尾由 KinParams 负责，
+    // 随机部分由 profile 的相关目标 + 一阶响应给出）。
+    let fat0 = rng.uniform(1.00, 1.04);
+    let fat_slope = rng.uniform(0.010, 0.020);
+    let fat_min = rng.uniform(0.94, 0.97);
+    let phase_v = rng.uniform(0.0, std::f64::consts::TAU);
+    let (wp1, wp2, wp3) = (
+        rng.uniform(100.0, 140.0),
+        rng.uniform(38.0, 56.0),
+        rng.uniform(15.0, 23.0),
+    );
+    let (wa1, wa2, wa3) = (
+        rng.uniform(0.002, 0.006),
+        rng.uniform(0.008, 0.018),
+        rng.uniform(0.003, 0.008),
+    );
+    // 疲劳包络：默认硬限制在 [fat_min, fat0]，只允许 1~2 个短窗（20~44s、
+    // 余弦渐变）越界，越界幅度 1.5~3%，避免长时间、大范围来回摆动。
+    let exc_n = if rng.random() < 0.5 { 1 } else { 2 };
+    let mut exc_windows: Vec<(f64, f64, f64)> = Vec::with_capacity(exc_n);
+    for _ in 0..exc_n {
+        let center = rng.uniform(0.15 * dur_f, 0.85 * dur_f);
+        let half = rng.uniform(10.0, 22.0);
+        let eps = rng.uniform(0.015, 0.030);
+        exc_windows.push((center, half, eps));
+    }
+    let excursion = |t: f64| -> f64 {
+        let mut best = 0.0f64;
+        for &(center, half, eps) in &exc_windows {
+            let x = (t - center).abs();
+            if x < half {
+                let w = 0.5 * (1.0 + (std::f64::consts::PI * x / half).cos());
+                if eps * w > best {
+                    best = eps * w;
+                }
+            }
+        }
+        best
+    };
+    let mean_mul: Vec<f64> = times
+        .iter()
+        .map(|&tt| {
+            let km = (tt / dur_f) * dist / 1000.0;
+            let fatigue = if km <= 0.5 {
+                fat0
+            } else {
+                (fat0 - fat_slope * (km - 0.5)).max(fat_min)
+            };
+            let wave = 1.0
+                + wa1 * (std::f64::consts::TAU * tt / wp1 + phase_v).sin()
+                + wa2 * (std::f64::consts::TAU * tt / wp2 + phase_v * 2.3).sin()
+                + wa3 * (std::f64::consts::TAU * tt / wp3 + phase_v * 3.7).sin();
+            let e = excursion(tt);
+            let lo = fat_min * (1.0 - e);
+            let hi = fat0 * (1.0 + e);
+            (fatigue * wave).clamp(lo, hi)
+        })
+        .collect();
     // 限速边界按次抽样：角点限速不需要每次都压到同一个固定值
     let (v_lo, v_hi) = (rng.uniform(1.90, 1.98), rng.uniform(6.22, 6.28));
-    let speeds = pace_profile(
+    let speeds = pace_profile_with_mul(
         &route,
         avg_v,
         &dts,
@@ -487,6 +545,7 @@ fn build_from_route(
         &kin,
         v_lo,
         v_hi,
+        &mean_mul,
     )?;
     let cum_dist = cumulative(&times, &speeds, false);
     // 距离必须来自速度积分，且与请求值一致；否则如实报错
