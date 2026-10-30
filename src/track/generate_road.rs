@@ -13,7 +13,7 @@ use super::geom::{
     MET_PER_DEG_LNG,
 };
 use super::model::{GenPoint, Segment, TenWindow, Track};
-use super::postfix::apply_post_fixes;
+use super::postfix::{apply_post_fixes, densify_locations};
 use route_planner::profile::{
     correlated_cadence_profile, cumulative, time_grid, windows_from_cum, CadenceSpec,
 };
@@ -630,25 +630,28 @@ fn build_from_route(
     let mut jitter = GpsJitter::new(0.72, 0.75, 0.3);
 
     let mut locs: Vec<GenPoint> = Vec::with_capacity(n);
+    let mut s_at: Vec<f64> = Vec::with_capacity(n);
     let mut s = 0.0f64;
-    // 海拔：校区基准 + 按次抽样的缓变起伏（与经典模式一致）
+    // 海拔：校区基准 + 沿闭环路线弧长的缓变起伏（与经典模式一致）。
+    // 整数周期 → 同一地点海拔恒定、起终点闭合；按时间驱动会让每圈同位置差几米。
     let alt_base = 82.0 + rng.uniform(-3.0, 3.0);
     let alt_amp = rng.uniform(0.4, 4.0);
-    let alt_period = rng.uniform(240.0, 900.0);
+    let alt_cycles = rng.choice(&[1, 1, 2, 2, 3]) as f64;
     let alt_phase = rng.uniform(0.0, std::f64::consts::TAU);
-    let alt_theta = rng.uniform(0.02, 0.09);
-    let alt_mean = |tt: f64| {
-        alt_base + alt_amp * (std::f64::consts::TAU * tt / alt_period + alt_phase).sin()
+    let alt_len = (*arcs.last().unwrap_or(&1.0)).max(1.0);
+    let alt_at = |ss: f64| {
+        alt_base
+            + alt_amp * (std::f64::consts::TAU * alt_cycles * ss / alt_len + alt_phase).sin()
     };
-    let alt_sigma = rng.uniform(0.15, 0.35);
-    let mut alt = alt_mean(0.0) + rng.uniform(-0.4, 0.4);
 
     for i in 0..n {
         let dt = dts[i];
         let (typ, lt) = kinds[i];
         // 距离恒来自速度积分（异常点也占用该区间的真实里程）
         let d_step = speeds[i] * dt;
-        s += d_step;
+        // 先落位、后累加：点 i 落在 cum_dist[i] 处，保证「相邻点几何位移 ÷ 该段
+        // 时间」等于真实速度；先累加会让跳变处的几何速度变成 2×/0.5×。
+        s_at.push(s);
         let pos = |ss: f64| ring_point_at(&dense, &arcs, ss);
         let px;
         let py;
@@ -755,7 +758,7 @@ fn build_from_route(
             state = rng.weighted(&[(1, 102), (2, 124), (3, 136)]);
         }
         let (lat, lng) = to_bd(px, py, c_lat, c_lng);
-        alt += alt_theta * (alt_mean(times[i]) - alt) + rng.gauss(0.0, alt_sigma);
+        let alt = alt_at(s);
         let nxt = pos(s + 2.0);
         let brg =
             ((nxt.0 - x).atan2(nxt.1 - y).to_degrees() + rng.gauss(0.0, 12.0)).rem_euclid(360.0);
@@ -819,6 +822,7 @@ fn build_from_route(
             state,
             locationId: String::new(),
         });
+        s += d_step;
     }
     // 10s 窗 / 60s 段与圈同源：全部由累计序列按时间边界插值派生
     let ten_speed: Vec<TenWindow> = windows_from_cum(&times, &cum_dist, dur_f, 10.0)
@@ -855,9 +859,9 @@ fn build_from_route(
         });
     }
 
-    apply_post_fixes(&mut locs, &mut rng, start_ms);
-
-    // 点位吸附：<40m 精确落位（全量打卡点，含必经点与普通打卡点）
+    // 点位吸附：<40m 精确落位（全量打卡点，含必经点与普通打卡点）。
+    // 必须在加密前完成：加密按段插值偏移量，会把这次修正分摊到相邻 1s 点上；
+    // 若在加密后吸附，几米的修正全压在一个 1s 点上，几何速度会出现尖峰。
     for pl in route_bd {
         let mut best_i = None;
         let mut best_d = 1e18f64;
@@ -876,6 +880,27 @@ fn build_from_route(
             }
         }
     }
+
+    // 采样加密：5s 主网格（含丢点 10/15s）按 1s 补点，位置沿路网弧长插值。
+    // 官方 App 用上传点连线着色，稀疏点与长间隔会在图上显示为灰色段。
+    let mut locs = densify_locations(
+        locs,
+        &times,
+        &cum_dist,
+        &cum_steps,
+        &s_at,
+        1.0,
+        |ss| ring_point_at(&dense, &arcs, ss),
+        |la, lo| {
+            (
+                (lo - c_lng) * MET_PER_DEG_LNG,
+                (la - c_lat) * MET_PER_DEG_LAT,
+            )
+        },
+        |x, y| to_bd(x, y, c_lat, c_lng),
+        &mut rng,
+    );
+    apply_post_fixes(&mut locs, &mut rng, start_ms);
 
     let total_dis = round_to(integral_dist, 3);
     let total_time = round_to(dur_f, 0) as i64;

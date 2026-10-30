@@ -1,7 +1,8 @@
 //! 自然轨迹生成器。
 //!
 //! 画像驱动：打卡点拟合闭合环（Catmull-Rom，每段 18 采样）→ 弧长表；
-//! 采样间隔主 5s（80%）；速度 = 相关随机目标 × 热身/疲劳/波动/凹陷 + 一阶响应 + 弯道限速；
+//! 采样间隔主 5s（80%，内部网格），输出点再按 1s 加密（`postfix::densify_locations`）；
+//! 速度 = 相关随机目标 × 热身/疲劳/波动/凹陷 + 一阶响应 + 弯道限速；
 //! 距离由速度积分、步数由步频积分；10s 窗与 60s 段由同一累计序列派生；
 //! 哨兵点（首 type∈{0,7}、索引1 type=5、末 type=6）；点位吸附。
 //! 距离与时长无法同时满足时返回 `Err`。
@@ -9,7 +10,7 @@
 
 use super::geom::{fmt_gain_time, make_point_ring, ring_point_at, round_to, to_bd, Rng, MET_PER_DEG_LAT, MET_PER_DEG_LNG};
 use super::model::{GenPoint, Segment, TenWindow, Track};
-use super::postfix::apply_post_fixes;
+use super::postfix::{apply_post_fixes, densify_locations};
 use route_planner::profile::{
     correlated_cadence_profile, correlated_speed_profile, cumulative, time_grid, windows_from_cum,
     CadenceSpec, SpeedSpec,
@@ -258,27 +259,33 @@ pub fn build(
         }
     }
     let mut locs: Vec<GenPoint> = Vec::with_capacity(n);
+    let mut s_at: Vec<f64> = Vec::with_capacity(n);
     let mut s = s0;
     let mut jx = 0.0f64;
     let mut jy = 0.0f64;
-    // 海拔：校区基准 + 按次抽样的缓变起伏，避免每次都以同一曲线回归同一常数
+    // 海拔：校区基准 + 沿闭环弧长的缓变起伏。
+    // 用整数周期（1~3 圈一个完整正弦）而不是时间：闭环时同一地点海拔恒定、
+    // 起终点闭合；按时间驱动会让每圈同一位置差出几米、起终点有净爬升。
     let alt_base = 82.0 + rng.uniform(-3.0, 3.0);
     let alt_amp = rng.uniform(0.4, 4.0);
-    let alt_period = rng.uniform(240.0, 900.0);
+    let alt_cycles = rng.choice(&[1, 1, 2, 2, 3]) as f64;
     let alt_phase = rng.uniform(0.0, std::f64::consts::TAU);
-    let alt_theta = rng.uniform(0.02, 0.09);
-    let alt_mean = |tt: f64| {
-        alt_base + alt_amp * (std::f64::consts::TAU * tt / alt_period + alt_phase).sin()
+    let alt_len = (*arcs.last().unwrap_or(&1.0)).max(1.0);
+    let alt_at = |ss: f64| {
+        alt_base
+            + alt_amp * (std::f64::consts::TAU * alt_cycles * ss / alt_len + alt_phase).sin()
     };
-    let alt_sigma = rng.uniform(0.15, 0.35);
-    let mut alt = alt_mean(0.0) + rng.uniform(-0.4, 0.4);
 
     for i in 0..n {
         let dt = dts[i];
         let (typ, lt) = kinds[i];
         // 距离恒来自速度积分（异常点不改变累计里程）
         let d_step = speeds[i] * dt;
-        s += direction * d_step;
+        // 先落位、后累加：点 i 必须落在 cum_dist[i]（即 times[i] 时刻）处。
+        // 若先累加，第 i→i+1 点的几何位移会取到「下一段」的时间间隔：5s→10s/15s
+        // 跳变处几何速度变成 2×/0.5×/0.33×，首段 1s 更是 5×。App 若按坐标推速度/
+        // 配速着色，这些段就会显示成异常条块。
+        s_at.push(s);
         let pos = |ss: f64| ring_point_at(&dense, &arcs, ss);
         let px;
         let py;
@@ -352,7 +359,7 @@ pub fn build(
             state = rng.weighted(&[(1, 102), (2, 124), (3, 136)]);
         }
         let (lat, lng) = to_bd(px, py, c_lat, c_lng);
-        alt += alt_theta * (alt_mean(times[i]) - alt) + rng.gauss(0.0, alt_sigma);
+        let alt = alt_at(s);
         let nxt = pos(s + direction * 2.0);
         let brg = ((nxt.0 - x).atan2(nxt.1 - y).to_degrees() + rng.gauss(0.0, 12.0)).rem_euclid(360.0);
         // 异常点（-1）：avgSpeed 为累计均值（真人与此一致，不为 0）；
@@ -417,6 +424,7 @@ pub fn build(
             state,
             locationId: String::new(),
         });
+        s += direction * d_step;
     }
     // 10s 窗 / 60s 段与圈同源：全部由累计序列按时间边界插值派生
     let ten_speed: Vec<TenWindow> = windows_from_cum(&times, &cum_dist, dur_f, 10.0)
@@ -447,9 +455,9 @@ pub fn build(
         });
     }
 
-    apply_post_fixes(&mut locs, &mut rng, start_ms);
-
-    // 点位吸附：<40m 精确落位
+    // 点位吸附：<40m 精确落位。
+    // 必须在加密前完成：加密按段插值偏移量，会把这次修正分摊到相邻 1s 点上；
+    // 若在加密后吸附，几米的修正全压在一个 1s 点上，几何速度会出现尖峰。
     for pl in points_bd {
         let mut best_i = None;
         let mut best_d = 1e18f64;
@@ -468,6 +476,27 @@ pub fn build(
             }
         }
     }
+
+    // 采样加密：5s 主网格（含丢点 10/15s）按 1s 补点，位置沿环线弧长插值。
+    // 官方 App 用上传点连线着色，稀疏点会在图上显示为灰色段。
+    let mut locs = densify_locations(
+        locs,
+        &times,
+        &cum_dist,
+        &cum_steps,
+        &s_at,
+        1.0,
+        |ss| ring_point_at(&dense, &arcs, ss),
+        |la, lo| {
+            (
+                (lo - c_lng) * MET_PER_DEG_LNG,
+                (la - c_lat) * MET_PER_DEG_LAT,
+            )
+        },
+        |x, y| to_bd(x, y, c_lat, c_lng),
+        &mut rng,
+    );
+    apply_post_fixes(&mut locs, &mut rng, start_ms);
 
     let total_dis = round_to(integral_dist, 3);
     let total_time = round_to(dur_f, 0) as i64;

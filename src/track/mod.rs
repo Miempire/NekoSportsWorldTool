@@ -114,9 +114,9 @@ mod tests {
             track.totalDistance
         );
         assert_eq!(track.totalTime, 1220);
-        // 点数合理（主 5s 采样）
+        // 点数合理（5s 主网格 → 输出层 1s 加密，约 1220 点）
         let n = track.locations.len();
-        assert!((200..320).contains(&n), "n={n}");
+        assert!((1150..1300).contains(&n), "n={n}");
         // 哨兵：索引0 type∈{0,7}/totalTime=0/state=1；索引1 type=5 全零；末点 type=6
         assert!([0, 7].contains(&track.locations[0].ptype));
         assert_eq!(track.locations[0].totalTime, 0);
@@ -137,19 +137,19 @@ mod tests {
             "末点={}",
             track.locations.last().unwrap().totalDis
         );
-        // 采样间隔：5s 占比 ≥ 60%
-        let mut fives = 0;
+        // 采样间隔：输出层按 1s 加密，相邻间隔应几乎全为 1s
+        let mut dense = 0;
         let mut total = 0;
         for w in track.locations.windows(2) {
             let dt = w[1].totalTime - w[0].totalTime;
             if dt > 0 {
                 total += 1;
-                if dt == 5 {
-                    fives += 1;
+                if dt <= 2 {
+                    dense += 1;
                 }
             }
         }
-        assert!(fives as f64 / total as f64 > 0.6, "5s 占比不足");
+        assert!(dense as f64 / total as f64 > 0.95, "1s 加密不足");
         // 10s 窗非空、结构合法
         assert!(!track.speedPerTenSec.is_empty());
         assert_eq!(track.speedPerTenSec.len(), track.stepsPerTenSec.len());
