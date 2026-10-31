@@ -649,16 +649,34 @@ fn build_from_route(
     let mut locs: Vec<GenPoint> = Vec::with_capacity(n);
     let mut s_at: Vec<f64> = Vec::with_capacity(n);
     let mut s = 0.0f64;
-    // 海拔：校区基准 + 沿闭环路线弧长的缓变起伏（与经典模式一致）。
-    // 整数周期 → 同一地点海拔恒定、起终点闭合；按时间驱动会让每圈同位置差几米。
+    // 海拔：校区基准 + 沿闭环路线弧长的多谐波起伏（与经典模式一致）。
+    // 整数周期 → 同一地点海拔恒定、起终点闭合；多档谐波让曲线接近真实地形。
     let alt_base = 82.0 + rng.uniform(-3.0, 3.0);
-    let alt_amp = rng.uniform(0.4, 4.0);
-    let alt_cycles = rng.choice(&[1, 1, 2, 2, 3]) as f64;
-    let alt_phase = rng.uniform(0.0, std::f64::consts::TAU);
     let alt_len = (*arcs.last().unwrap_or(&1.0)).max(1.0);
+    let mut alt_harm: Vec<(f64, f64, f64)> = Vec::with_capacity(3);
+    alt_harm.push((
+        rng.choice(&[1, 1, 2, 2]) as f64,
+        rng.uniform(1.0, 3.0),
+        rng.uniform(0.0, std::f64::consts::TAU),
+    ));
+    alt_harm.push((
+        rng.choice(&[2, 3, 3, 4]) as f64,
+        rng.uniform(0.4, 1.2),
+        rng.uniform(0.0, std::f64::consts::TAU),
+    ));
+    if rng.random() < 0.7 {
+        alt_harm.push((
+            rng.choice(&[5, 6, 7, 8]) as f64,
+            rng.uniform(0.15, 0.45),
+            rng.uniform(0.0, std::f64::consts::TAU),
+        ));
+    }
     let alt_at = |ss: f64| {
-        alt_base
-            + alt_amp * (std::f64::consts::TAU * alt_cycles * ss / alt_len + alt_phase).sin()
+        let mut v = alt_base;
+        for &(n, amp, ph) in &alt_harm {
+            v += amp * (std::f64::consts::TAU * n * ss / alt_len + ph).sin();
+        }
+        v
     };
 
     for i in 0..n {
