@@ -492,6 +492,11 @@ fn build_from_route(
         rng.uniform(0.008, 0.018),
         rng.uniform(0.003, 0.008),
     );
+    // 慢周期长波（180~360s、1.5~3%）+ 疲劳回拨：与经典模式同口径。
+    let (wp4, wa4) = (rng.uniform(180.0, 360.0), rng.uniform(0.015, 0.030));
+    let phase4 = rng.uniform(0.0, std::f64::consts::TAU);
+    let rec_tau = rng.uniform(50.0, 85.0);
+    let rec_max = rng.uniform(0.55, 0.85);
     // 疲劳包络：默认硬限制在 [fat_min, fat0]，只允许 1~2 个短窗（20~44s、
     // 余弦渐变）越界，越界幅度 1.5~3%，避免长时间、大范围来回摆动。
     let exc_n = if rng.random() < 0.5 { 1 } else { 2 };
@@ -515,25 +520,37 @@ fn build_from_route(
         }
         best
     };
-    let mean_mul: Vec<f64> = times
-        .iter()
-        .map(|&tt| {
-            let km = (tt / dur_f) * dist / 1000.0;
-            let fatigue = if km <= 0.5 {
-                fat0
-            } else {
-                (fat0 - fat_slope * (km - 0.5)).max(fat_min)
-            };
-            let wave = 1.0
-                + wa1 * (std::f64::consts::TAU * tt / wp1 + phase_v).sin()
-                + wa2 * (std::f64::consts::TAU * tt / wp2 + phase_v * 2.3).sin()
-                + wa3 * (std::f64::consts::TAU * tt / wp3 + phase_v * 3.7).sin();
-            let e = excursion(tt);
-            let lo = fat_min * (1.0 - e);
-            let hi = fat0 * (1.0 + e);
-            (fatigue * wave).clamp(lo, hi)
-        })
-        .collect();
+    let mut rec = 0.0f64;
+    let mut rel_ema = 1.0f64;
+    let mut mean_mul: Vec<f64> = Vec::with_capacity(n);
+    for (i, &tt) in times.iter().enumerate() {
+        let dt = dts[i].max(0.0);
+        let km = (tt / dur_f) * dist / 1000.0;
+        let fatigue = if km <= 0.5 {
+            fat0
+        } else {
+            (fat0 - fat_slope * (km - 0.5)).max(fat_min)
+        };
+        let wave = 1.0
+            + wa1 * (std::f64::consts::TAU * tt / wp1 + phase_v).sin()
+            + wa2 * (std::f64::consts::TAU * tt / wp2 + phase_v * 2.3).sin()
+            + wa3 * (std::f64::consts::TAU * tt / wp3 + phase_v * 3.7).sin()
+            + wa4 * (std::f64::consts::TAU * tt / wp4 + phase4).sin();
+        // 回拨状态：相对配速经 ~12s EMA 平滑后比趋势慢 1% 起缓释，慢 4% 达到上限；
+        // 回升快（τ≈50~85s）、消退慢（2.5τ）。
+        let rel_alpha = 1.0 - (-dt / 12.0).exp();
+        rel_ema += (wave - rel_ema) * rel_alpha;
+        let slow = (1.0 - rel_ema).max(0.0);
+        let rec_tgt = rec_max * ((slow - 0.01) / 0.03).clamp(0.0, 1.0);
+        let k = if rec_tgt > rec { 1.0 / rec_tau } else { 1.0 / (2.5 * rec_tau) };
+        rec += (rec_tgt - rec) * (1.0 - (-k * dt).exp());
+        // 回拨量按疲劳负债折算回起点状态 fat0（折向 1.0 会在 fat0>1 时产生反向偏差）。
+        let fatigue_eff = fat0 - (fat0 - fatigue) * (1.0 - rec);
+        let e = excursion(tt);
+        let lo = fat_min * (1.0 - e);
+        let hi = fat0 * (1.0 + e);
+        mean_mul.push((fatigue_eff * wave).clamp(lo, hi));
+    }
     // 限速边界按次抽样：角点限速不需要每次都压到同一个固定值
     let (v_lo, v_hi) = (rng.uniform(1.90, 1.98), rng.uniform(6.22, 6.28));
     let speeds = pace_profile_with_mul(

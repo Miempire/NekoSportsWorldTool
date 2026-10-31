@@ -143,16 +143,26 @@ pub fn build(
         rng.uniform(0.008, 0.018),
         rng.uniform(0.003, 0.008),
     );
-    // 疲劳降速：5km 内相对起点约 -4~-9%，长距离收敛到 fat_min（相对 fat0 下降 3~10%）；
-    // 不再出现前半程 +10%、后半程 -20% 的强正分段。
+    // 慢周期长波：真人配速是 1/f 型起伏，长周期幅度更大（180~360s、1.5~3%）。
+    let (wp4, wa4) = (rng.uniform(180.0, 360.0), rng.uniform(0.015, 0.030));
+    let phase4 = rng.uniform(0.0, std::f64::consts::TAU);
+    // 疲劳降速：5km 内相对起点约 -4~-9%，长距离收敛到 fat_min（相对 fat0 下降 3~10%）。
+    // 同时叠加「回拨」：慢周期波谷/凹陷（相对趋势跑慢）时，疲劳负债按 τ≈50~85s
+    // 缓释（回补 55~85% 的降幅），慢段结束后再以 2.5τ 缓慢消退，形成
+    // 「慢下来还能缓过来」，而不是一路单向下坡。
     let fat0 = rng.uniform(1.00, 1.04);
     let fat_slope = rng.uniform(0.010, 0.020);
     let fat_min = rng.uniform(0.94, 0.97);
+    let rec_tau = rng.uniform(50.0, 85.0);
+    let rec_max = rng.uniform(0.55, 0.85);
+    let mut rec = 0.0f64;
+    let mut rel_ema = 1.0f64;
     let base = dist / dur_f;
-    // 速度均值倍率：热身 ramp × 疲劳 × 三正弦波动 × 余弦凹陷（不含白噪声，
-    // 随机部分统一由 profile 的相关目标 + 一阶响应给出）
+    // 速度均值倍率：热身 ramp × 疲劳（含回拨）× 四正弦波动 × 余弦凹陷
+    // （不含白噪声，随机部分统一由 profile 的相关目标 + 一阶响应给出）
     let mut mean_mul = Vec::with_capacity(n);
-    for &tt in &times {
+    for (i, &tt) in times.iter().enumerate() {
+        let dt = dts[i].max(0.0);
         let ramp = if tt < 8.0 {
             (0.85 + 0.15 * (tt / 1.0f64.max(8.0f64.min(dur_f / 20.0)))).min(1.0)
         } else {
@@ -164,11 +174,24 @@ pub fn build(
         } else {
             (fat0 - fat_slope * (km_done - 0.5)).max(fat_min)
         };
-        let wave = (1.0 + wa1 * (std::f64::consts::TAU * tt / wp1 + phase_v).sin()
+        let wave = (1.0
+            + wa1 * (std::f64::consts::TAU * tt / wp1 + phase_v).sin()
             + wa2 * (std::f64::consts::TAU * tt / wp2 + phase_v * 2.3).sin()
-            + wa3 * (std::f64::consts::TAU * tt / wp3 + phase_v * 3.7).sin())
+            + wa3 * (std::f64::consts::TAU * tt / wp3 + phase_v * 3.7).sin()
+            + wa4 * (std::f64::consts::TAU * tt / wp4 + phase4).sin())
             * dip_factor(tt);
-        mean_mul.push(ramp * fatigue * wave);
+        // 回拨状态：相对配速经 ~12s EMA 平滑后比趋势慢 1% 起缓释，慢 4% 达到上限
+        // （瞬时波形会被短周期噪声打散，平滑后才能识别「持续跑慢」这一段）。
+        let rel_alpha = 1.0 - (-dt / 12.0).exp();
+        rel_ema += (wave - rel_ema) * rel_alpha;
+        let slow = (1.0 - rel_ema).max(0.0);
+        let rec_tgt = rec_max * ((slow - 0.01) / 0.03).clamp(0.0, 1.0);
+        let k = if rec_tgt > rec { 1.0 / rec_tau } else { 1.0 / (2.5 * rec_tau) };
+        rec += (rec_tgt - rec) * (1.0 - (-k * dt).exp());
+        // 回拨量按「疲劳负债」折算回起点状态 fat0（而非折算到 1.0）：
+        // 起点乘数 fat0 > 1，若折向 1.0 会出现「恢复后比刚开跑还快」的反向偏差。
+        let fatigue_eff = fat0 - (fat0 - fatigue) * (1.0 - rec);
+        mean_mul.push(ramp * fatigue_eff * wave);
     }
     // 逐点速度约束在有效配速窗口内侧；边界按次抽样，避免固定钳制值形成平顶
     let (v_lo, v_hi) = (rng.uniform(1.92, 1.98), rng.uniform(6.22, 6.28));
