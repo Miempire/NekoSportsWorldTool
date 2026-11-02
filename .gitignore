@@ -1,0 +1,40 @@
+/target
+Cargo.lock.bak
+nekosportsworldtool.log*
+*.log.old
+
+# 运行时数据（含会话/凭据，禁止入库）
+/session.json
+/config.json
+/identity.json
+/points_cache.json
+/semester_result.json
+/rank_result.json
+/.idea/
+docs/_preview.png
+/docs
+/fixtures
+/ai_sports.json
+/obs_*.json
+/rec_all.tmp
+/msg.txt
+/.superpowers/
+/android/build/
+/android/.signing/
+*.apk
+*.aab
+*.keystore
+*.jks
+/target-ui/
+/.android-test/
+/.worktrees/
+
+# 打包输出（含 exe 与运行数据，禁止入库）
+/dist
+# 本地工具目录
+/.mimosa/
+/.zcode/
+
+# 自动更新替换残留
+*.exe.old
+*.exe.new
