@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn override_replaces_every_bd_a_and_clears_ascent() {
-        let mut track = build(1200.0, 600, 7, (38.9, 121.54), 1_700_000_000_000, &points())
+        let mut track = build(1200.0, 600, 7, (38.9, 121.54), 1_700_000_000_000, &points(), None)
             .expect("build");
         override_bd_a(&mut track, 36.75).unwrap();
         assert!(track.locations.iter().all(|p| p.bdA == 36.75));
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn rejects_non_finite_or_out_of_range_values() {
-        let mut track = build(1000.0, 500, 1, (38.9, 121.54), 1_700_000_000_000, &points())
+        let mut track = build(1000.0, 500, 1, (38.9, 121.54), 1_700_000_000_000, &points(), None)
             .expect("build");
         assert!(override_bd_a(&mut track, f64::NAN).is_err());
         assert!(override_bd_a(&mut track, 9001.0).is_err());
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn range_mapping_stays_inside_requested_bounds() {
-        let mut track = build(1200.0, 600, 7, (38.9, 121.54), 1_700_000_000_000, &points())
+        let mut track = build(1200.0, 600, 7, (38.9, 121.54), 1_700_000_000_000, &points(), None)
             .expect("build");
         override_bd_a_range(&mut track, AltitudeRange { min_m: 11.6, max_m: 22.8 }).unwrap();
         assert!(track.locations.iter().all(|p| (11.6..=22.8).contains(&p.bdA)));

@@ -86,7 +86,8 @@ mod tests {
         let pts = sample_points();
         let net = road_grid();
         let start = 1_788_958_186_123i64;
-        let track = build_road(3300.0, 1220, 42, start, &pts, &pts[1..], &net).expect("build_road");
+        let track = build_road(3300.0, 1220, 42, start, &pts, &pts[1..], &net, None)
+            .expect("build_road");
         assert!(
             (track.totalDistance - 3300.0).abs() < 0.5,
             "dist={}",
@@ -106,7 +107,7 @@ mod tests {
     fn test_generator_distribution() {
         let pts = sample_points();
         let start = 1_788_958_186_123i64;
-        let track = build(3300.0, 1220, 42, (38.9, 121.54), start, &pts).expect("build");
+        let track = build(3300.0, 1220, 42, (38.9, 121.54), start, &pts, None).expect("build");
         // 总距离精确等于目标（±0.5m 舍入容差）
         assert!(
             (track.totalDistance - 3300.0).abs() < 0.5,
@@ -164,7 +165,8 @@ mod tests {
     #[test]
     fn test_point_snapping() {
         let pts = sample_points();
-        let track = build(2200.0, 900, 7, (38.9, 121.54), 1_788_958_186_123, &pts).expect("build");
+        let track = build(2200.0, 900, 7, (38.9, 121.54), 1_788_958_186_123, &pts, None)
+            .expect("build");
         for pl in &pts {
             let min_m = track
                 .locations
@@ -184,7 +186,7 @@ mod tests {
     fn test_speed_bounds_have_no_hard_atoms() {
         let pts = sample_points();
         for seed in 0..8u64 {
-            let t = build(3300.0, 1220, seed, (38.9, 121.54), 1_788_958_186_123, &pts)
+            let t = build(3300.0, 1220, seed, (38.9, 121.54), 1_788_958_186_123, &pts, None)
                 .expect("build");
             for p in &t.locations {
                 if p.avgSpeed <= 0.0 {
@@ -210,7 +212,7 @@ mod tests {
         ];
         for seed in 0..16u64 {
             for &(dist, dur) in &combos {
-                let t = build(dist, dur, seed, (38.9, 121.54), 1_788_958_186_123, &pts)
+                let t = build(dist, dur, seed, (38.9, 121.54), 1_788_958_186_123, &pts, None)
                     .expect("build");
                 for (i, w) in t.speedPerTenSec.iter().enumerate() {
                     // 尾窗写的是该窗实际时长内的真实距离，按 w.time 折算配速
@@ -309,6 +311,7 @@ mod tests {
             (38.9, 121.54),
             1_788_958_186_123,
             &sample_points(),
+            None,
         )
         .expect("build");
         let obj = build_obs_object(&track, 1320403809, "UUID-TEST", 13056447, &pts);

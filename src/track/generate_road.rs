@@ -283,6 +283,7 @@ pub fn build_road(
     route_bd: &[(f64, f64)],
     must_bd: &[(f64, f64)],
     net: &RoadGraph,
+    v_bounds: Option<(f64, f64)>,
 ) -> Result<Track, String> {
     let avg_v = dist / dur as f64;
     let a_c_max = 2.5;
@@ -296,7 +297,7 @@ pub fn build_road(
     let waypoints: Vec<Coord> = route_bd.iter().map(|p| Coord::new(p.1, p.0)).collect();
     let must: Vec<Coord> = must_bd.iter().map(|p| Coord::new(p.1, p.0)).collect();
     let route = plan_route_split(net, &waypoints, &must, dist, seed, &opts)?;
-    build_from_route(dist, dur, seed, start_ms, route_bd, &route, net)
+    build_from_route(dist, dur, seed, start_ms, route_bd, &route, net, v_bounds)
 }
 
 /// 模式 C：跑道绕圈。
@@ -312,6 +313,7 @@ pub fn build_track(
     must_bd: &[(f64, f64)],
     net: &RoadGraph,
     outline_bd: &[(f64, f64)],
+    v_bounds: Option<(f64, f64)>,
 ) -> Result<Track, String> {
     let start_bd = *route_bd.first().ok_or("跑道模式缺少起点")?;
     let ring = route_planner::validate_outline(net, outline_bd, 5.0)?;
@@ -326,7 +328,7 @@ pub fn build_track(
         ..Default::default()
     };
     let tr = route_planner::plan_track_route(net, &ring, start, &must, dist, &opts)?;
-    build_from_route(dist, dur, seed, start_ms, route_bd, &tr.route, net)
+    build_from_route(dist, dur, seed, start_ms, route_bd, &tr.route, net, v_bounds)
 }
 
 /// 跑道预览计划（供地图显示）。
@@ -451,6 +453,7 @@ fn build_from_route(
     route_bd: &[(f64, f64)],
     route: &Route,
     net: &RoadGraph,
+    v_bounds: Option<(f64, f64)>,
 ) -> Result<Track, String> {
     let mut rng = Rng::new(seed);
     let dur_f = dur as f64;
@@ -551,8 +554,11 @@ fn build_from_route(
         let hi = fat0 * (1.0 + e);
         mean_mul.push((fatigue_eff * wave).clamp(lo, hi));
     }
-    // 限速边界按次抽样：角点限速不需要每次都压到同一个固定值
-    let (v_lo, v_hi) = (rng.uniform(1.90, 1.98), rng.uniform(6.22, 6.28));
+    // 速度窗口：优先用用户配速范围换算的窗口，未提供时按次抽样宽窗口。
+    let (v_lo, v_hi) = match v_bounds {
+        Some((lo, hi)) if hi > lo => (lo, hi),
+        _ => (rng.uniform(1.90, 1.98), rng.uniform(6.22, 6.28)),
+    };
     let speeds = pace_profile_with_mul(
         &route,
         avg_v,

@@ -31,6 +31,9 @@ pub struct RunParams {
     pub route_mode: RouteMode,
     /// 跑道模式人工确认的闭合轮廓（BD, lat/lon）；空表示未确认。
     pub track_outline: Vec<(f64, f64)>,
+    /// 用户的配速范围（秒/km，两端任意顺序）；用于把瞬时速度限制在范围内。
+    /// `None` 时退回生成器的历史宽窗口（1.9~6.28 m/s）。
+    pub pace_range: Option<(f64, f64)>,
 }
 
 pub struct RunOutcome {
@@ -150,6 +153,11 @@ pub fn run_full_flow(
         params.dur,
         route_pts.len()
     ));
+    // 瞬时速度窗口：由用户配速范围换算，避免生成配速跑出设定范围；
+    // 未提供范围时退回生成器默认宽窗口。
+    let v_bounds = params
+        .pace_range
+        .and_then(|(a, b)| crate::track::generator::speed_bounds_from_pace(a, b));
     // 随机 0-4 秒偏移（终端上报的 flag 与首点差 <5s），轨迹/提交/OBS/五点统一使用
     let start_ms = params.start_ms + (rand::random::<i64>() % 5) * 1000;
     let mut track = match params.route_mode {
@@ -191,6 +199,7 @@ pub fn run_full_flow(
                             &route_pts,
                             &must_bd,
                             &filtered,
+                            v_bounds,
                         ) {
                             Ok(t) => {
                                 log(&format!(
@@ -254,6 +263,7 @@ pub fn run_full_flow(
                 &must_bd,
                 &fenced,
                 &params.track_outline,
+                v_bounds,
             ) {
                 Ok(t) => {
                     log(&format!(
@@ -286,6 +296,7 @@ pub fn run_full_flow(
             (anchor.latitude, anchor.longitude),
             start_ms,
             &pts_bd,
+            v_bounds,
         )?,
     };
     if let Some(range) = params.manual_altitude_range {

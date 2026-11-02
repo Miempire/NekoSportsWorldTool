@@ -144,6 +144,7 @@ mod validation_tests {
             (38.9, 121.54),
             1_700_000_000_000,
             &points,
+            None,
         )
         .expect("build");
         crate::track::altitude::override_bd_a(&mut track, 36.75).unwrap();
@@ -170,6 +171,7 @@ mod validation_tests {
             (38.9, 121.54),
             1_700_000_000_000,
             &points,
+            None,
         )
         .expect("build");
         let laps = build_laps(&track, track.startTime);

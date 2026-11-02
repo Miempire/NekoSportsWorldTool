@@ -340,6 +340,8 @@ fn cmd_run(rest: &[&str]) -> i32 {
         seed,
         route_mode,
         track_outline: Vec::new(),
+        // CLI 没有配速区间参数：以 --pace 为均值上下浮动 5s/km 作为范围
+        pace_range: Some((pace_s as f64 - 5.0, pace_s as f64 + 5.0)),
     };
     match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
         Ok(out) => {
@@ -681,6 +683,7 @@ fn cmd_obs_sample(rest: &[&str]) -> i32 {
         (anchor.latitude, anchor.longitude),
         start_ms,
         &pts_bd,
+        None,
     ) {
         Ok(t) => t,
         Err(e) => {

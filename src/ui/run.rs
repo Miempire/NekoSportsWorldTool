@@ -1236,6 +1236,7 @@ impl App {
                 seed,
                 route_mode,
                 track_outline,
+                pace_range: Some((plan.pace_min as f64, plan.pace_max as f64)),
             };
             let payload = match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
                 Ok(out) => {

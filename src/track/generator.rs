@@ -20,6 +20,30 @@ use route_planner::profile::{
 pub const SPEED_FLOOR: f64 = 1.90;
 pub const SPEED_CEIL: f64 = 6.30;
 
+/// 由用户配置的配速范围（秒/km）换算速度窗口 `(最慢, 最快)`（m/s）。
+///
+/// 生成器原先固定用 1.90~6.28 m/s 的宽窗口，瞬时速度可以明显偏离用户设定的
+/// 配速范围（例如设 6'00"~6'10"/km，波动峰段却跑到 5'30"/km）。这里把窗口
+/// 收窄到用户范围本身，并夹在平台硬边界 `[SPEED_FLOOR, SPEED_CEIL]` 内。
+/// 上限留 0.3% 余量：`dur = round(dist × pace)` 取整后，若窗口上限恰好等于
+/// 目标均值，δ 二分可能因浮点/取整误差凑不满目标距离。
+pub fn speed_bounds_from_pace(pace_a_s_per_km: f64, pace_b_s_per_km: f64) -> Option<(f64, f64)> {
+    let (fast, slow) = if pace_a_s_per_km <= pace_b_s_per_km {
+        (pace_a_s_per_km, pace_b_s_per_km)
+    } else {
+        (pace_b_s_per_km, pace_a_s_per_km)
+    };
+    if !(fast.is_finite() && slow.is_finite()) || fast <= 0.0 {
+        return None;
+    }
+    let v_min = (1000.0 / slow).max(SPEED_FLOOR);
+    let v_max = ((1000.0 / fast) * 1.003).min(SPEED_CEIL);
+    if !(v_min.is_finite() && v_max.is_finite()) || v_max <= v_min {
+        return None;
+    }
+    Some((v_min, v_max))
+}
+
 /// 沿闭环逐点曲率限速（向心加速度上限），供速度剖面的弯道 cap 使用。
 fn ring_speed_caps(
     dense: &[(f64, f64)],
@@ -90,6 +114,9 @@ fn ring_speed_caps(
 }
 
 /// 轨迹生成主入口。points_bd 为 BD 系打卡点；不可行参数返回 `Err`。
+///
+/// `v_bounds` 为速度窗口 `(最慢, 最快)`（m/s），由用户配速范围换算而来；
+/// `None` 时沿用历史宽窗口（1.92~6.28 m/s）。
 pub fn build(
     dist: f64,
     dur: i64,
@@ -97,6 +124,7 @@ pub fn build(
     _center: (f64, f64),
     start_ms: i64,
     points_bd: &[(f64, f64)],
+    v_bounds: Option<(f64, f64)>,
 ) -> Result<Track, String> {
     let mut rng = Rng::new(seed);
     let dur_f = dur as f64;
@@ -193,8 +221,12 @@ pub fn build(
         let fatigue_eff = fat0 - (fat0 - fatigue) * (1.0 - rec);
         mean_mul.push(ramp * fatigue_eff * wave);
     }
-    // 逐点速度约束在有效配速窗口内侧；边界按次抽样，避免固定钳制值形成平顶
-    let (v_lo, v_hi) = (rng.uniform(1.92, 1.98), rng.uniform(6.22, 6.28));
+    // 逐点速度约束在有效配速窗口内侧；优先用用户配速范围换算的窗口，
+    // 未提供时按次抽样，避免固定钳制值形成平顶。
+    let (v_lo, v_hi) = match v_bounds {
+        Some((lo, hi)) if hi > lo => (lo, hi),
+        _ => (rng.uniform(1.92, 1.98), rng.uniform(6.22, 6.28)),
+    };
     let speed_seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
     let build_spec = |caps: Vec<f64>| SpeedSpec {
         dts: dts.clone(),
