@@ -43,6 +43,16 @@ pub struct ParsedOsm {
     pub tracks: Vec<OsmTrackWay>,
 }
 
+/// OSM 元素 ID 解析。
+///
+/// JOSM 未上传的导出里所有元素 ID 都是负数（如 `-26132`），直接
+/// `parse::<u64>()` 会整批失败，导致节点与 way 引用全被丢弃（地图空白）。
+/// 这里先按 `i64` 解析，再无损映射到 `u64`（负数走二进制补码）；定义端与
+/// 引用端共用同一映射，查找依然一致。
+fn parse_osm_id(s: &str) -> Option<u64> {
+    s.trim().parse::<i64>().ok().map(|v| v as u64)
+}
+
 /// 不应被当作可跑步道路的 highway 值。
 fn is_motorized(h: &str) -> bool {
     matches!(
@@ -93,7 +103,7 @@ impl Attrs {
         self.map.get(k).map(|s| s.as_str())
     }
     fn id(&self) -> Option<u64> {
-        self.get("id").and_then(|v| v.parse().ok())
+        self.get("id").and_then(parse_osm_id)
     }
 }
 
@@ -146,7 +156,7 @@ pub fn parse_osm(bytes: &[u8]) -> Result<ParsedOsm, String> {
                     }
                     "nd" => {
                         if let Some((_, refs, _)) = cur_way.as_mut() {
-                            if let Some(r) = attrs.get("ref").and_then(|v| v.parse().ok()) {
+                            if let Some(r) = attrs.get("ref").and_then(parse_osm_id) {
                                 refs.push(r);
                             }
                         }
@@ -254,7 +264,7 @@ pub fn parse_osm(bytes: &[u8]) -> Result<ParsedOsm, String> {
                                 let outer: Vec<u64> = members
                                     .iter()
                                     .filter(|(mtype, _r, role)| mtype == "way" && role == "outer")
-                                    .filter_map(|(_, r, _)| r.parse().ok())
+                                    .filter_map(|(_, r, _)| parse_osm_id(r))
                                     .collect();
                                 if !outer.is_empty() {
                                     rel_buildings.push(outer);
@@ -405,7 +415,14 @@ pub fn build_graph(parsed: &ParsedOsm) -> RoadGraph {
 pub fn load_osm(bytes: &[u8]) -> Result<RoadGraph, String> {
     let parsed = parse_osm(bytes)?;
     if parsed.roads.is_empty() {
-        return Err("OSM 中未找到可用的 highway 道路".into());
+        // 带上解析统计：节点数为 0 说明坐标/ID 没解析出来；节点正常但没有道路
+        // 说明 way 缺 highway 标签或全被 is_motorized 过滤。
+        return Err(format!(
+            "OSM 中未找到可用的 highway 道路（解析到 {} 个节点、{} 个建筑、{} 条跑道）",
+            parsed.nodes.len(),
+            parsed.buildings.len(),
+            parsed.tracks.len()
+        ));
     }
     Ok(build_graph(&parsed))
 }
