@@ -139,9 +139,7 @@ pub fn canny(src: &[f32], w: usize, h: usize, low: f32, high: f32) -> Vec<u8> {
 
 /// 零均值归一化互相关模板匹配（TM_CCOEFF_NORMED 等价），返回最佳 x。
 ///
-/// GT4 滑块拼图的 slice 图是"背景图同一高度上的一张小图"——纵向位置固定在 oy=0，
-/// 只需横向扫描即可。纵向全搜索不仅慢（O(bh × bw)），还会在背景上有其他相似纹理时
-/// 返回一个"纵向错位的 x"，导致 userresponse 偏差几十像素 → 服务端 10003 拒绝。
+/// 纵向 + 横向全搜索，保持之前的识别模式。
 pub fn match_x(bg: &[u8], bw: usize, bh: usize, tpl: &[u8], tw: usize, th: usize) -> usize {
     if tw == 0 || th == 0 || tw > bw || th > bh {
         return 0;
@@ -153,36 +151,36 @@ pub fn match_x(bg: &[u8], bw: usize, bh: usize, tpl: &[u8], tw: usize, th: usize
     if t_norm == 0.0 {
         return 0;
     }
-    // GT4 纵向固定：切片图与背景图同高，只需 oy=0
-    let oy = if bh == th { 0 } else { bh.saturating_sub(th) / 2 };
     let mut best_x = 0usize;
     let mut best_score = f64::NEG_INFINITY;
-    for ox in 0..=(bw - tw) {
-        let mut s_sum = 0f64;
-        for ty in 0..th {
-            let row = (oy + ty) * bw + ox;
-            for tx in 0..tw {
-                let v = bg[row + tx] as f64;
-                s_sum += v;
+    for oy in 0..=(bh - th) {
+        for ox in 0..=(bw - tw) {
+            let mut s_sum = 0f64;
+            for ty in 0..th {
+                let row = (oy + ty) * bw + ox;
+                for tx in 0..tw {
+                    let v = bg[row + tx] as f64;
+                    s_sum += v;
+                }
             }
-        }
-        let s_mean = s_sum / (tw * th) as f64;
-        let mut num = 0f64;
-        let mut st_sum = 0f64;
-        for ty in 0..th {
-            let row = (oy + ty) * bw + ox;
-            let trow = ty * tw;
-            for tx in 0..tw {
-                let sv = bg[row + tx] as f64 - s_mean;
-                num += sv * t[trow + tx];
-                st_sum += sv * sv;
+            let s_mean = s_sum / (tw * th) as f64;
+            let mut num = 0f64;
+            let mut st_sum = 0f64;
+            for ty in 0..th {
+                let row = (oy + ty) * bw + ox;
+                let trow = ty * tw;
+                for tx in 0..tw {
+                    let sv = bg[row + tx] as f64 - s_mean;
+                    num += sv * t[trow + tx];
+                    st_sum += sv * sv;
+                }
             }
-        }
-        let denom = st_sum.sqrt() * t_norm;
-        let score = if denom == 0.0 { 0.0 } else { num / denom };
-        if score > best_score {
-            best_score = score;
-            best_x = ox;
+            let denom = st_sum.sqrt() * t_norm;
+            let score = if denom == 0.0 { 0.0 } else { num / denom };
+            if score > best_score {
+                best_score = score;
+                best_x = ox;
+            }
         }
     }
     best_x
