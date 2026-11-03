@@ -1,0 +1,35 @@
+{
+  "schema": "nekosportsworld-config-v1",
+  "identity": {
+    "platform": "android",
+    "device_id": "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
+    "idfa": "",
+    "os_version": "14",
+    "device_name": "Pixel 8",
+    "manufacturer": "Google",
+    "anchor_lat": 39.908722,
+    "anchor_lon": 116.397499,
+    "app_install_time": 1718899200000,
+    "mac_address": "08:a4:b3:5c:12:34",
+    "city": "北京市"
+  },
+  "config": {
+    "username": "",
+    "password": "",
+    "remember": false,
+    "dist_min": 1.5,
+    "dist_max": 3.0,
+    "pace_min": 320.0,
+    "pace_max": 380.0,
+    "face_check": true,
+    "manual_altitude": null,
+    "manual_altitude_range": null,
+    "ai_minutes": 15,
+    "ai_reps": 3,
+    "update_check": "silent",
+    "osm_path": "",
+    "route_mode": "legacy",
+    "must_points_limit": null
+  },
+  "note": "示例配置包（example-config.json）。使用方法见 README / `nekosportsworldtool help export-bundle` / `nekosportsworldtool help import-bundle`。导入会立即覆盖 identity.json + config.json，不会覆盖 session.json（除非显式加 --apply-session）。"
+}

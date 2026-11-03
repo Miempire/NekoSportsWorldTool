@@ -248,6 +248,103 @@ pub fn save_config(c: &Config) -> Result<(), String> {
     write_json("config.json", c)
 }
 
+// ── 配置打包 / 解包（跨设备迁移）────────────────────────────
+
+/// 用于导出/导入的完整配置包：设备身份 + UI 参数 + 登录态（可选）。
+///
+/// 目的：把一台机器上的「设备身份（identity.json）+ 跑步参数（config.json）+
+/// 登录会话（session.json）」打包成单个 JSON 文件，方便换机器或分发给朋友。
+///
+/// 字段语义：
+///   - schema = "nekosportsworld-config-v1" —— 用于将来迁移时版本判断
+///   - identity —— 必填，设备身份（device_id 会随包一起迁移到新机器）
+///   - config —— 必填，UI 跑步参数
+///   - session —— 可选，登录态；分享给别人前请清空 `token`（避免会话泄漏）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ConfigBundle {
+    pub schema: String,
+    pub identity: HeaderIdentity,
+    pub config: Config,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<Session>,
+    #[serde(default)]
+    pub note: String,
+}
+
+impl ConfigBundle {
+    pub const SCHEMA_V1: &'static str = "nekosportsworld-config-v1";
+
+    /// 从当前运行时状态构造一个完整包（登录态一并带上）。
+    pub fn from_runtime() -> Self {
+        Self {
+            schema: Self::SCHEMA_V1.into(),
+            identity: load_identity(),
+            config: load_config(),
+            session: Some(load_session()),
+            note: format!(
+                "Exported from NekoSportsWorldTool on {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+            ),
+        }
+    }
+
+    /// 只导出设备身份 + 跑步参数（不含登录会话，适合分享）。
+    pub fn runtime_public() -> Self {
+        let mut b = Self::from_runtime();
+        b.session = None;
+        b
+    }
+}
+
+/// 把当前所有配置导出为 JSON 文件。
+///
+/// `public = true` 时不包含登录 `session`（分享给他人前建议设为 true，
+/// 避免把已登录 token 一并分出去）。
+pub fn export_bundle(path: &std::path::Path, public: bool) -> Result<(), String> {
+    let bundle = if public {
+        ConfigBundle::runtime_public()
+    } else {
+        ConfigBundle::from_runtime()
+    };
+    let json = serde_json::to_string_pretty(&bundle)
+        .map_err(|e| format!("序列化失败：{e}"))?;
+    std::fs::write(path, json)
+        .map_err(|e| format!("写入 {} 失败：{e}", path.display()))
+}
+
+/// 从 JSON 文件读回配置并**立即落盘**。
+///
+/// 覆盖：identity.json（设备身份）、config.json（跑步参数）；
+/// 若包内包含 session 且 `apply_session = true`，则也覆盖 session.json。
+///
+/// 返回导入的字段列表，调用方可用于 UI 提示。
+pub fn import_bundle(path: &std::path::Path, apply_session: bool) -> Result<String, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("读取 {} 失败：{e}", path.display()))?;
+    let bundle: ConfigBundle = serde_json::from_str(&text)
+        .map_err(|e| format!("解析失败：{e}"))?;
+    if bundle.schema != ConfigBundle::SCHEMA_V1 {
+        return Err(format!(
+            "不支持的 schema `{}`；当前只接受 `{}`",
+            bundle.schema,
+            ConfigBundle::SCHEMA_V1
+        ));
+    }
+    // 设备身份：允许覆盖
+    save_identity(&bundle.identity)?;
+    let mut applied = vec!["identity.json".to_string(), "config.json".to_string()];
+    // UI 参数
+    save_config(&bundle.config)?;
+    // 会话：只有明确要求时才覆盖（避免导入时不小心把登录态搞丢）
+    if apply_session {
+        if let Some(s) = bundle.session.as_ref() {
+            save_session(s)?;
+            applied.push("session.json".to_string());
+        }
+    }
+    Ok(applied.join(" + "))
+}
+
 #[cfg(test)]
 mod storage_tests {
     use super::*;

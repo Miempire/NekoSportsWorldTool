@@ -178,6 +178,55 @@ impl App {
             }
         });
 
+        ui.add_space(6.0);
+        ui.separator();
+        ui.add_space(6.0);
+        mobile::row(ui, |ui| {
+            // —— 导出 / 导入配置包 ——
+            #[cfg(not(target_os = "android"))]
+            {
+                if ui.button("导出全部参数…").clicked() {
+                    let path = rfd::FileDialog::new()
+                        .add_filter("配置包", &["json"])
+                        .set_file_name("nekosportsworld-config.json")
+                        .set_title("导出设备身份 + 跑步参数（不含登录会话）")
+                        .save_file();
+                    if let Some(p) = path {
+                        match crate::api::model::export_bundle(&p, true) {
+                            Ok(()) => self.status = format!("√ 已导出到 {}", p.display()),
+                            Err(e) => self.status = format!("× 导出失败：{e}"),
+                        }
+                    }
+                }
+                if ui.button("导入参数…").clicked() {
+                    let path = rfd::FileDialog::new()
+                        .add_filter("配置包", &["json"])
+                        .set_title("导入配置包（将覆盖当前 identity/config）")
+                        .pick_file();
+                    if let Some(p) = path {
+                        match crate::api::model::import_bundle(&p, false) {
+                            Ok(applied) => {
+                                self.status = format!("√ 已导入并生效：{}", applied);
+                                // identity 已被 model 层落盘；把 UI 缓冲区同步刷新
+                                self.identity = crate::api::model::load_identity();
+                                self.device_buf = self.identity.clone();
+                            }
+                            Err(e) => self.status = format!("× 导入失败：{e}"),
+                        }
+                    }
+                }
+            }
+            #[cfg(target_os = "android")]
+            {
+                ui.add(theme::dim_label("Android 请用 CLI：export-bundle / import-bundle"));
+            }
+        });
+        ui.add_space(2.0);
+        ui.colored_label(
+            theme::text_dim(),
+            "导出 JSON 包含设备身份 + 跑步参数（登录会话默认不导出）。导入会立即覆盖当前配置。",
+        );
+
         ui.add_space(12.0);
         ui.separator();
         ui.colored_label(

@@ -61,6 +61,12 @@ AI 运动
                                             本地生成 OBS 样本（不提交）
   update  [--check]                         检查更新；默认下载并自替换
 
+配置迁移
+  export-bundle [--file path] [--include-session]
+                                            把设备身份 + 跑步参数打包成 JSON
+  import-bundle --file path [--apply-session]
+                                            从 JSON 读回配置并立即落盘
+
 通用
   --help, -h      显示帮助；可跟在任意命令后查看该命令详情
   --version, -V   显示版本
@@ -132,6 +138,18 @@ pub(crate) fn usage_cmd(cmd: &str) -> bool {
              \n  本地生成一份 OBS 对象样本用于结构对照，不会提交（缺省 obs_ours.json）。"
         }
         "update" => "update [--check]\n\n  检查更新；默认下载并自替换，--check 只打印结果与下载地址。",
+        "export-bundle" => {
+            "export-bundle [--file path] [--include-session]\n\
+             \n  把 identity.json + config.json 打包成单个 JSON 文件。\n\
+             \n  --file              输出路径；缺省用时间戳命名（nekosportsworld-config-YYYYMMDD-HHMMSS.json）\n\
+             \n  --include-session   同时把 session.json 里的登录 token 一并导出（分享给他人前请先登录态）"
+        }
+        "import-bundle" => {
+            "import-bundle --file path [--apply-session]\n\
+             \n  从 JSON 读回配置并立即覆盖 identity.json + config.json。\n\
+             \n  --file             配置包路径（由 export-bundle 生成）\n\
+             \n  --apply-session    若包内有 session 字段也一并覆盖 session.json（默认不覆盖）"
+        }
         "help" => "help [命令]\n\n  查看总览或指定命令的详细用法。",
         _ => return false,
     };

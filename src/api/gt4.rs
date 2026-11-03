@@ -45,9 +45,16 @@ fn get_str_16(rng: &mut impl Rng) -> String {
     (0..4).map(|_| four_random_chart(rng)).collect()
 }
 
-/// 找 nonce（16 个随机 hex 字符）使 sha256(base+nonce) 以 "00" 开头。
-fn get_pow_msg_str_16(pow_msg_base: &str, log: &mut dyn FnMut(&str)) -> String {
+/// 找 nonce（16 个随机 hex 字符）使 sha256(base+nonce) 以 `bits` 个 0-hex 字符开头。
+///
+/// GT4 服务端在 pow_detail.bits 里给出难度（= 前导 00 hex 字符数，不是二进制位）；
+/// 例如 bits=5 表示 hash 必须以 "00000" 开头。原代码永远只检查 2 个 hex 字符，
+/// 当服务端提高难度时会永远算不过 PoW。
+fn get_pow_msg_str_16(pow_msg_base: &str, bits: usize, log: &mut dyn FnMut(&str)) -> String {
     const HEX: &[u8] = b"0123456789abcdef";
+    // 规范化：bits 至少 2，上限 16（sha256 总共 64 hex 字符；太多时 cap 避免 OOM）
+    let needed = bits.clamp(2, 16);
+    let prefix = "0".repeat(needed);
     let mut rng = rand::thread_rng();
     let mut attempts = 0u64;
     loop {
@@ -59,8 +66,11 @@ fn get_pow_msg_str_16(pow_msg_base: &str, log: &mut dyn FnMut(&str)) -> String {
         hasher.update(nonce.as_bytes());
         let hash = format!("{:x}", hasher.finalize());
         attempts += 1;
-        if hash.starts_with("00") {
-            log(&format!("[gt4] PoW 找到 nonce（尝试 {attempts} 次）"));
+        if hash.starts_with(&prefix) {
+            log(&format!(
+                "[gt4] PoW(bits={}) 找到 nonce（尝试 {attempts} 次）",
+                needed
+            ));
             return nonce;
         }
     }
@@ -73,6 +83,11 @@ fn get_pow_msg(
     lot_number: &str,
     log: &mut dyn FnMut(&str),
 ) -> String {
+    // 读取服务端指定的 PoW 难度（= 前导 0-hex 字符数；原代码永远用 2）
+    let bits: usize = pow_detail["bits"]
+        .as_u64()
+        .or_else(|| pow_detail["bits"].as_i64().map(|v| v.max(0) as u64))
+        .unwrap_or(2) as usize;
     let base = format!(
         "{}|{}|{}|{}|{}|{}||",
         pow_detail["version"].as_str().unwrap_or(""),
@@ -82,7 +97,7 @@ fn get_pow_msg(
         captcha_id,
         lot_number
     );
-    let nonce = get_pow_msg_str_16(&base, log);
+    let nonce = get_pow_msg_str_16(&base, bits, log);
     format!("{base}{nonce}")
 }
 

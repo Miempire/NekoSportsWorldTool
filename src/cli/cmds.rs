@@ -39,6 +39,8 @@ fn allowed_flags(cmd: &str) -> Option<&'static [&'static str]> {
         "cheat" => &["page"],
         "rank" => &["type", "sort", "gender", "date", "range"],
         "update" => &["check"],
+        "export-bundle" => &["file", "include-session"],
+        "import-bundle" => &["file", "apply-session"],
         "help" | "--help" | "-h" | "version" | "--version" | "-V" | "-v" => &[],
         _ => return None,
     })
@@ -83,6 +85,8 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         "cheat" => cmd_cheat(&rest),
         "rank" => cmd_rank(&rest),
         "update" => cmd_update(&rest),
+        "export-bundle" => cmd_export_bundle(&rest),
+        "import-bundle" => cmd_import_bundle(&rest),
         "version" | "--version" | "-V" | "-v" => {
             println!(
                 "NekoSportsWorldTool v{}（{}）",
@@ -1109,6 +1113,62 @@ fn cmd_update(rest: &[&str]) -> i32 {
                 println!("× 替换失败: {e}");
                 1
             }
+        }
+    }
+}
+
+fn cmd_export_bundle(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let default = format!(
+        "nekosportsworld-config-{}.json",
+        chrono::Local::now().format("%Y%m%d-%H%M%S")
+    );
+    let out = get(&flags, "file").unwrap_or(&default);
+    let include_session = get(&flags, "include-session").is_some();
+    let path = std::path::PathBuf::from(out);
+    match model::export_bundle(&path, !include_session) {
+        Ok(()) => {
+            let note = if include_session {
+                "（含登录会话；分享前请确认安全）"
+            } else {
+                "（不含登录会话）"
+            };
+            println!("√ 已导出 {}", path.display());
+            println!("{}", note);
+            0
+        }
+        Err(e) => {
+            println!("× 导出失败：{e}");
+            1
+        }
+    }
+}
+
+fn cmd_import_bundle(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let Some(file) = get(&flags, "file") else {
+        eprintln!("缺少 --file <path>");
+        eprintln!("查看用法：nekosportsworldtool help import-bundle");
+        return 1;
+    };
+    let path = std::path::PathBuf::from(file);
+    if !path.exists() {
+        eprintln!("文件不存在：{}", path.display());
+        return 1;
+    }
+    let apply_session = get(&flags, "apply-session").is_some();
+    match model::import_bundle(&path, apply_session) {
+        Ok(applied) => {
+            println!("√ 已导入并覆盖：{}", applied);
+            println!("  下次 GUI 启动时自动使用新配置");
+            if !apply_session {
+                println!("  （未覆盖 session；加 --apply-session 可一并覆盖）");
+            }
+            0
+        }
+        Err(e) => {
+            println!("× 导入失败：{e}");
+            1
         }
     }
 }
