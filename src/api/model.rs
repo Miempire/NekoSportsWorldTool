@@ -5,6 +5,7 @@
 //! （账号/参数）、points_cache.json（点位缓存）。
 
 pub use crate::crypto::header::HeaderIdentity;
+use chrono::Local;
 
 pub const HOST: &str = "https://run.gxapp.iydsj.com";
 /// 排行榜 / 违规名单域名（信封链与 RUN 相同）。
@@ -283,7 +284,7 @@ impl ConfigBundle {
             session: Some(load_session()),
             note: format!(
                 "Exported from NekoSportsWorldTool on {}",
-                chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+                Local::now().format("%Y-%m-%d %H:%M:%S")
             ),
         }
     }
