@@ -218,7 +218,7 @@ impl App {
             }
             #[cfg(target_os = "android")]
             {
-                ui.add(theme::dim_label("Android 请用 CLI：export-bundle / import-bundle"));
+                ui.colored_label(theme::text_dim(), "Android 请用 CLI：export-bundle / import-bundle");
             }
         });
         ui.add_space(2.0);

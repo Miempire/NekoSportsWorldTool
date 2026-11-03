@@ -330,7 +330,7 @@ fn cmd_run(rest: &[&str]) -> i32 {
             Ok(n) => Some(n),
             Err(_) => {
                 eprintln!("--must 需为 ≥0 的整数（收到 {v}）");
-                return;
+                return 1;
             }
         },
         None => None,
