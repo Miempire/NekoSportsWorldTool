@@ -84,7 +84,7 @@ pub(crate) fn usage_cmd(cmd: &str) -> bool {
         "run" => {
             "run [--dist km] [--pace 秒/km|分:秒] [--altitude 米|最小-最大]\n\
              \x20   [--ago 分钟 | --days-ago 0-3 --time HH:MM]\n\
-             \x20   [--face 0|1] [--seed n] [--route legacy|road]\n\
+             \x20   [--face 0|1] [--seed n] [--route legacy|road] [--must n]\n\
              \n  --dist       目标距离（km），缺省随机 1.0~1.5\n\
              \n  --pace       目标配速，支持 360 或 6:00 两种写法，缺省随机 6:00~8:00\n\
              \n  --altitude   固定海拔（米）或 最小-最大 区间\n\
@@ -93,6 +93,7 @@ pub(crate) fn usage_cmd(cmd: &str) -> bool {
              \n  --time       开跑时刻 HH:MM（配合 --days-ago）\n\
              \n  --face       是否做人脸校验 0|1，缺省 1\n\
              \n  --seed       随机种子；0 表示按当前时间取\n\
+             \n  --must       只经过前 N 个策略必经点（缺省全部，0=不经过）\n\
              \n  --route      legacy=打卡点环，road=真实道路路由（缺省取配置）"
         }
         "template" => "template --file <GPX/JSON>\n\n  本地读取真实记录，分析海拔范围与累计升降（不会上传）。",

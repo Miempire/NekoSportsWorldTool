@@ -361,6 +361,10 @@ impl App {
                 hour: 12,
                 minute: 0,
                 face_check: config.face_check,
+                must_limit: config
+                    .must_points_limit
+                    .map(|n| n.to_string())
+                    .unwrap_or_default(),
                 plan: None,
                 route_mode: crate::track::generate_road::RouteMode::from_str(&config.route_mode),
                 map: map::MapState::default(),

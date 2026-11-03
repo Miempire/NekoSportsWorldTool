@@ -1,8 +1,13 @@
-//! 跑道：OSM 候选提取（无歧义拼接）、轮廓校验、逆时针方向校验与
+//! 跑道：OSM 候选提取、轮廓校验、逆时针方向校验与
 //! 「连接段一次 + 整圈 + 最后部分圈」路由。
 //!
-//! 候选只依赖节点共享关系：任一路段节点的度数 ≠ 2 即视为歧义或断路，
-//! 该连通分量整体不提供（宁可缺候选，也不猜拼接顺序）。
+//! 候选提取：
+//!   - 自身闭合的 way 直接成环；
+//!   - 开放 way 若回访了中间节点，取其中最长的一段闭合子环
+//!     （「引道 + 跑道」常画成一条 way）；
+//!   - 剩余开口 way 按节点共享建邻接表，反复剪掉度 ≤1 的悬空支路得到
+//!     2-core；然后在每个连通分量里用 DFS 找最长简单环，允许内部弦线、
+//!     允许多条 way 在公共节点交叉（不再强制所有节点度=2）。
 
 use std::collections::{HashMap, HashSet};
 
@@ -247,12 +252,36 @@ pub fn track_candidates(g: &RoadGraph) -> Vec<TrackCandidate> {
             ) {
                 out.push(c);
             }
-        } else {
-            open.push(i);
+            continue;
         }
+        // 开放 way 内部可能已经画出了一个闭合回环：跑道常把「引道 + 跑道」画成一条
+        // way，终点回到中间某个节点而不是首点（首尾不相等，但尾部子段闭合）。
+        // 取最长的一段回环作为候选，剩下的引道仍按开口 way 参与拼接。
+        let mut best: Option<(usize, usize)> = None;
+        let mut first_pos: HashMap<u64, usize> = HashMap::new();
+        for (pos, &id) in w.nodes.iter().enumerate() {
+            if let Some(&prev) = first_pos.get(&id) {
+                let span = pos - prev;
+                if span >= 4 && best.map(|(s, e)| e - s < span).unwrap_or(true) {
+                    best = Some((prev, pos));
+                }
+            } else {
+                first_pos.insert(id, pos);
+            }
+        }
+        if let Some((a, b)) = best {
+            let ids = dedup_ring_nodes(&w.nodes[a..=b]);
+            if let Some(c) =
+                build_candidate(g, &id_map, &ids, vec![w.id], &w.sport, &w.surface)
+            {
+                out.push(c);
+            }
+        }
+        open.push(i);
     }
 
-    // 二、开口 way：按节点共享拼接；任何节点度 ≠ 2 的分量整体跳过（歧义或断路）
+    // 二、开口 way：按节点共享拼接（支持多条 way 通过公共节点组成一个环，
+    // 例如把跑道拆成四段画、或「引道+跑道」之外还有一条横跨弦线的情况）。
     let mut adj: HashMap<u64, Vec<u64>> = HashMap::new();
     for &i in &open {
         for pair in ways[i].nodes.windows(2) {
@@ -262,6 +291,33 @@ pub fn track_candidates(g: &RoadGraph) -> Vec<TrackCandidate> {
             }
             adj.entry(a).or_default().push(b);
             adj.entry(b).or_default().push(a);
+        }
+    }
+    // 剪掉悬空支路：真实 OSM 常在跑道环上挂 `highway=track` 的引道/小路，
+    // 这些节点度为 1；反复删除度 ≤1 的节点后，剩下的 2-core 就是所有可能
+    // 出现在某个环上的节点。内部弦线（连接环上两点）不会被剪掉，但它们会
+    // 让部分节点度变为 3；后续直接用"找最长简单环"绕过这些歧义。
+    let mut leaf: Vec<u64> = adj
+        .iter()
+        .filter(|(_, nbrs)| nbrs.len() <= 1)
+        .map(|(&n, _)| n)
+        .collect();
+    let mut dropped: HashSet<u64> = HashSet::new();
+    while let Some(n) = leaf.pop() {
+        if !dropped.insert(n) {
+            continue;
+        }
+        if let Some(nbrs) = adj.remove(&n) {
+            for m in nbrs {
+                if let Some(list) = adj.get_mut(&m) {
+                    if let Some(pos) = list.iter().position(|&x| x == n) {
+                        list.remove(pos);
+                    }
+                    if list.len() <= 1 && !dropped.contains(&m) {
+                        leaf.push(m);
+                    }
+                }
+            }
         }
     }
     let mut keys: Vec<u64> = adj.keys().copied().collect();
@@ -274,24 +330,25 @@ pub fn track_candidates(g: &RoadGraph) -> Vec<TrackCandidate> {
         let mut comp: Vec<u64> = Vec::new();
         let mut stack = vec![start];
         seen.insert(start);
-        let mut ambiguous = false;
         while let Some(n) = stack.pop() {
             comp.push(n);
             let nbrs = adj.get(&n).cloned().unwrap_or_default();
-            if nbrs.len() != 2 {
-                ambiguous = true;
-            }
             for m in nbrs {
                 if seen.insert(m) {
                     stack.push(m);
                 }
             }
         }
-        if ambiguous || comp.len() < 4 {
+        if comp.len() < 4 {
             continue;
         }
-        let ring = walk_cycle(&adj, start, comp.len());
-        if ring.len() != comp.len() {
+        // 对每个分量，在其中找最长的简单环（允许分量内有度 ≥3 的节点，
+        // 即允许跑道上挂内部弦线、允许多条 way 在公共节点交叉）。
+        // 不强制所有节点度=2——以前这会把有内弦的跑道整体丢弃。
+        let Some(ring) = find_longest_simple_cycle(&adj, &comp) else {
+            continue;
+        };
+        if ring.len() < 4 {
             continue;
         }
         let comp_set: HashSet<u64> = comp.iter().copied().collect();
@@ -337,30 +394,84 @@ fn dedup_ring_nodes(nodes: &[u64]) -> Vec<u64> {
     out
 }
 
-/// 在度全为 2 的连接分量中沿环走一圈（返回不含闭合重复点的节点序列）。
-fn walk_cycle(adj: &HashMap<u64, Vec<u64>>, start: u64, want: usize) -> Vec<u64> {
-    let mut out = vec![start];
-    let Some(first) = adj.get(&start) else {
-        return out;
-    };
-    let mut prev = start;
-    let mut cur = first[0];
-    while cur != start && out.len() <= want {
-        out.push(cur);
-        let Some(nbrs) = adj.get(&cur) else {
-            break;
+/// 在一个连通分量（2-core，节点度均 ≥2）中找最长的简单环。
+///
+/// 允许分量内存在度 ≥3 的节点（内部弦线、多条 way 交叉），
+/// 通过对每个起点/方向做一次 DFS，在不重复访问节点的约束下找到
+/// 能回到起点的最长路径。若不存在简单环（分量是树或单边）则返回 None。
+///
+/// 复杂度：O(|V| × (|V| + |E|)) 量级，跑道场景（几十节点）可忽略。
+fn find_longest_simple_cycle(
+    adj: &HashMap<u64, Vec<u64>>,
+    comp: &[u64],
+) -> Option<Vec<u64>> {
+    let comp_set: HashSet<u64> = comp.iter().copied().collect();
+    let mut best: Vec<u64> = Vec::new();
+
+    for &start in comp {
+        let Some(start_nbrs) = adj.get(&start) else {
+            continue;
         };
-        if nbrs.len() != 2 {
-            break;
+        for &first in start_nbrs {
+            if !comp_set.contains(&first) {
+                continue;
+            }
+            let mut path = Vec::with_capacity(comp.len());
+            path.push(start);
+            path.push(first);
+            let mut visited: HashSet<u64> = HashSet::with_capacity(comp.len());
+            visited.insert(start);
+            visited.insert(first);
+            dfs_longest_cycle(adj, start, first, &mut path, &mut visited, &mut best);
+            // 早停：已经找到覆盖整个分量的环（不可能更长）
+            if best.len() >= comp.len() {
+                return Some(best);
+            }
         }
-        let next = if nbrs[0] != prev { nbrs[0] } else { nbrs[1] };
-        prev = cur;
-        cur = next;
     }
-    if out.len() == want && cur == start {
-        out
+    if best.len() >= 4 {
+        Some(best)
     } else {
-        Vec::new()
+        None
+    }
+}
+
+/// 递归 DFS 辅助：从 `cur` 出发，尝试所有未访问邻居；能回到 `target` 且
+/// path 长度更大时更新 `best`。path 不含闭合的 target 重复点。
+fn dfs_longest_cycle(
+    adj: &HashMap<u64, Vec<u64>>,
+    target: u64,
+    cur: u64,
+    path: &mut Vec<u64>,
+    visited: &mut HashSet<u64>,
+    best: &mut Vec<u64>,
+) {
+    let Some(nbrs) = adj.get(&cur) else {
+        return;
+    };
+    // 先试回到 target（能闭合）
+    for &n in nbrs {
+        if n == target && path.len() >= 3 {
+            // 找到闭合环（不含末尾重复点）
+            if path.len() > best.len() {
+                *best = path.clone();
+            }
+            return;
+        }
+    }
+    // 再试未访问节点（延伸路径）
+    for &n in nbrs {
+        if visited.contains(&n) || n == target {
+            continue;
+        }
+        visited.insert(n);
+        path.push(n);
+        dfs_longest_cycle(adj, target, n, path, visited, best);
+        path.pop();
+        visited.remove(&n);
+        // 剪枝：当前 path 即使能走到终点也不可能超过 best
+        // （还剩多少未访问节点 = comp.len - path.len；
+        //  这条信息传不进来，就不剪枝了，跑道规模小）
     }
 }
 

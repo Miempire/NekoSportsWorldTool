@@ -134,8 +134,9 @@ pub fn build(
     let s0 = rng.uniform(0.0, *arcs.last().unwrap_or(&400.0));
     let phase_v = rng.uniform(0.0, std::f64::consts::TAU);
 
-    // 采样节拍：冷启动前两次 1s 快速定位，之后 5s 定时；偶发丢点形成 10/15s 间隔
-    let p_drop = rng.uniform(0.004, 0.030);
+    // 采样节拍：冷启动前两次 1s 快速定位，之后 5s 定时；丢点概率下调
+    // （丢点造成 10/15s 间隔是地图灰色段的主要来源）
+    let p_drop = rng.uniform(0.002, 0.012);
     let times = time_grid(dur_f, p_drop, seed)?;
     let n = times.len();
     let mut dts: Vec<f64> = times.windows(2).map(|w| w[1] - w[0]).collect();
@@ -285,10 +286,12 @@ pub fn build(
     })?;
     let cum_steps = cumulative(&times, &cadences, true);
 
+    // 漂移/暂停概率已下调，减少地图上灰色段与暂停区
+    // （ptype=-1 为暂停/漂移点，灰色段主要来自它与丢点大间隔）
     let tl_w = [((-1i64, 4i64), 54u32), ((-1, 1), 27), ((-1, 12), 13), ((-1, 5), 3), ((-1, 6), 2)];
     let p_type3 = rng.uniform(0.30, 0.45);
-    let p_odd = rng.uniform(0.018, 0.035);
-    let p_drift = p_odd + rng.uniform(0.012, 0.030);
+    let p_odd = rng.uniform(0.006, 0.015);
+    let p_drift = p_odd + rng.uniform(0.004, 0.012);
     let mut kinds: Vec<(i64, i64)> = Vec::with_capacity(n);
     for _ in 0..n {
         let u = rng.random();
@@ -304,7 +307,8 @@ pub fn build(
     }
     for i in 1..kinds.len() {
         let prev_drift = (-1 == kinds[i - 1].0) || kinds[i - 1].0 == 5 || kinds[i - 1].0 == 6;
-        if kinds[i].0 != -1 && prev_drift && rng.random() < 0.08 {
+        // 暂停后状态切换概率降低（原 0.08），减少漂移-正常-漂移的快速抖动
+        if kinds[i].0 != -1 && prev_drift && rng.random() < 0.03 {
             kinds[i] = (if rng.random() < 0.75 { 7 } else { 8 }, 1);
         }
     }
@@ -571,6 +575,16 @@ pub fn build(
         &mut rng,
     );
     apply_post_fixes(&mut locs, &mut rng, start_ms);
+    // 瞬间配速（App 用 `speed`，单位 km/h）同样要落在用户配速范围内：
+    // 原先 4% 的「GPS 低速」与异常点 15~46km/h 的漂移尖峰，会让个别点显示成
+    // 1'30"~10'+/km 的极端配速。这里统一夹到同一速度窗口（km/h = m/s × 3.6）。
+    let kmh_lo = round_to(v_lo * 3.6, 4);
+    let kmh_hi = round_to(v_hi * 3.6, 4);
+    for p in locs.iter_mut() {
+        if p.speed > 0.0 {
+            p.speed = round_to(p.speed.clamp(kmh_lo, kmh_hi), 4);
+        }
+    }
 
     let total_dis = round_to(integral_dist, 3);
     let total_time = round_to(dur_f, 0) as i64;

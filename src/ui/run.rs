@@ -16,6 +16,15 @@ const RAND_HOUR_HI: u32 = 20;
 /// flow.rs 提交时会给开始时间加 0-4s 抖动，随机模式抽样时预留，避免「开始 + 用时」越过当前时刻。
 const JITTER_MARGIN_MS: i64 = 5_000;
 
+/// 解析「必经点数量」输入：空白 = 全部（`None`），否则取前 N 个。
+fn parse_must_limit(s: &str) -> Option<usize> {
+    let t = s.trim();
+    if t.is_empty() {
+        return None;
+    }
+    t.parse::<usize>().ok()
+}
+
 /// 指定日期（days_ago 天前）的 7:00-20:00 内均匀抽样一个时刻，且不晚于 latest_ms。
 ///
 /// latest_ms = 当前时刻 - 用时 - 抖动余量。若该日窗口整体晚于 latest_ms（例如凌晨选「今天」），
@@ -75,6 +84,8 @@ pub struct RunPage {
     pub hour: i64,
     pub minute: i64,
     pub face_check: bool,
+    /// 只经过策略必经点的前 N 个；空白=全部，0=不经过。
+    pub must_limit: String,
     /// 预计算方案：参数变更时重抽样，提交直接使用
     pub plan: Option<RunPlan>,
     /// 路线算法模式
@@ -192,6 +203,14 @@ pub struct RunPlan {
 }
 
 impl RunPage {
+    /// 本次实际经过的策略必经点：按「必经点数量」设置截取前 N 个；空白=全部。
+    fn limited_must(&self) -> Vec<(f64, f64)> {
+        match parse_must_limit(&self.must_limit) {
+            Some(n) => self.must_points.iter().take(n).copied().collect(),
+            None => self.must_points.clone(),
+        }
+    }
+
     /// 距离/配速是否与方案一致（不一致需重掷运动参数）。
     fn shape_matches(&self, p: &RunPlan) -> bool {
         p.dist_min == self.dist_min
@@ -470,6 +489,21 @@ impl App {
                 ui.label("人脸校验标记：");
                 ui.checkbox(&mut page.face_check, "faceCheck=1");
             });
+            mobile::row(ui, |ui| {
+                ui.label("必经点数量：");
+                let before = page.must_limit.clone();
+                mobile::text_edit(
+                    ui,
+                    "run_must_limit",
+                    &mut page.must_limit,
+                    crate::platform::InputKind::Text,
+                    120.0,
+                );
+                if page.must_limit != before {
+                    page.preview_stale = true;
+                }
+                ui.label("留空=全部；0=不经过");
+            });
             ui.horizontal(|ui| {
                 ui.label("路线算法：");
                 ui.selectable_value(&mut page.route_mode, RouteMode::Legacy, "经典打卡点环");
@@ -618,7 +652,7 @@ impl App {
                 let pts_bd = crate::api::points::points_bd(&pts);
                 if !pts_bd.is_empty() {
                     let fences = crate::api::model::load_fence_cache().unwrap_or_default();
-                    let must = self.run_page.must_points.clone();
+                    let must = self.run_page.limited_must();
                     match crate::track::generate_road::plan_road_view(
                         &net,
                         &pts_bd,
@@ -810,7 +844,7 @@ impl App {
         }
         let school = self.school_key();
         let fences = crate::api::model::load_fence_cache().unwrap_or_default();
-        let must = self.run_page.must_points.clone();
+        let must = self.run_page.limited_must();
 
         // 点位缓存按锚点隔离（与道路预览一致）
         let pts_bd: Vec<(f64, f64)> = self
@@ -1185,6 +1219,7 @@ impl App {
         let (dist, dur) = (plan.dist * 1000.0, plan.dur); // 米
         let start_ms = plan.start_ms;
         let face_check = if page.face_check { 1 } else { 0 };
+        let must_limit = parse_must_limit(&page.must_limit);
         let route_mode = page.route_mode;
         // 跑道模式必须已人工确认且轮廓未失效；确认后轮廓即为提交内容
         let track_outline = if route_mode == RouteMode::Track {
@@ -1203,6 +1238,7 @@ impl App {
         self.config.pace_min = page.pace_min;
         self.config.pace_max = page.pace_max;
         self.config.face_check = page.face_check;
+        self.config.must_points_limit = must_limit;
         self.config.manual_altitude = manual_altitude;
         self.config.manual_altitude_range = manual_altitude_range;
         self.config.route_mode = match route_mode {
@@ -1237,6 +1273,7 @@ impl App {
                 route_mode,
                 track_outline,
                 pace_range: Some((plan.pace_min as f64, plan.pace_max as f64)),
+                must_limit,
             };
             let payload = match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
                 Ok(out) => {

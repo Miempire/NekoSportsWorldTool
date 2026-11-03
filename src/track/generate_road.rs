@@ -467,7 +467,8 @@ fn build_from_route(
     let (dense, arcs) = route_ring(route, c_lat, c_lng);
 
     // 时间轴：末点严格落在 dur，Σdt = 总时长（不补时长）
-    let p_drop = rng.uniform(0.004, 0.030);
+    // 丢点概率下调（丢点造成 10/15s 间隔是地图灰色段的主要来源）
+    let p_drop = rng.uniform(0.002, 0.012);
     let times = time_grid(dur_f, p_drop, seed)?;
     let n = times.len();
     let mut dts: Vec<f64> = times.windows(2).map(|w| w[1] - w[0]).collect();
@@ -580,7 +581,7 @@ fn build_from_route(
         ));
     }
 
-    // 点位类型（同经典模式）
+    // 漂移/暂停概率已下调，减少地图上灰色段与暂停区
     let tl_w = [
         ((-1i64, 4i64), 54u32),
         ((-1, 1), 27),
@@ -589,8 +590,8 @@ fn build_from_route(
         ((-1, 6), 2),
     ];
     let p_type3 = rng.uniform(0.30, 0.45);
-    let p_odd = rng.uniform(0.018, 0.035);
-    let p_drift = p_odd + rng.uniform(0.012, 0.030);
+    let p_odd = rng.uniform(0.006, 0.015);
+    let p_drift = p_odd + rng.uniform(0.004, 0.012);
     let mut kinds: Vec<(i64, i64)> = Vec::with_capacity(n);
     for _ in 0..n {
         let u = rng.random();
@@ -606,7 +607,8 @@ fn build_from_route(
     }
     for i in 1..kinds.len() {
         let prev_drift = (-1 == kinds[i - 1].0) || kinds[i - 1].0 == 5 || kinds[i - 1].0 == 6;
-        if kinds[i].0 != -1 && prev_drift && rng.random() < 0.08 {
+        // 暂停后状态切换概率降低（原 0.08），减少漂移-正常-漂移的快速抖动
+        if kinds[i].0 != -1 && prev_drift && rng.random() < 0.03 {
             kinds[i] = (if rng.random() < 0.75 { 7 } else { 8 }, 1);
         }
     }
@@ -950,6 +952,15 @@ fn build_from_route(
         &mut rng,
     );
     apply_post_fixes(&mut locs, &mut rng, start_ms);
+    // 瞬间配速（App 用 `speed`，单位 km/h）同样夹到用户配速窗口，
+    // 避免 4% 低速漂移与异常点 15~46km/h 尖峰让个别点配速极端越界。
+    let kmh_lo = round_to(v_lo * 3.6, 4);
+    let kmh_hi = round_to(v_hi * 3.6, 4);
+    for p in locs.iter_mut() {
+        if p.speed > 0.0 {
+            p.speed = round_to(p.speed.clamp(kmh_lo, kmh_hi), 4);
+        }
+    }
 
     let total_dis = round_to(integral_dist, 3);
     let total_time = round_to(dur_f, 0) as i64;

@@ -34,6 +34,8 @@ pub struct RunParams {
     /// 用户的配速范围（秒/km，两端任意顺序）；用于把瞬时速度限制在范围内。
     /// `None` 时退回生成器的历史宽窗口（1.9~6.28 m/s）。
     pub pace_range: Option<(f64, f64)>,
+    /// 只经过策略必经点的前 N 个；`None`=全部，`Some(0)`=不经过。
+    pub must_limit: Option<usize>,
 }
 
 pub struct RunOutcome {
@@ -87,18 +89,30 @@ pub fn run_full_flow(
 
     // ③ 轨迹生成（必经点 + 打卡点）
     let pts_bd = points::points_bd(&pts);
+    // 必经点数量限制：只取策略顺序中的前 N 个（None=全部，0=一个都不经过）。
+    let must_points: Vec<(f64, f64)> = match params.must_limit {
+        Some(n) => pol.must_points.iter().take(n).copied().collect(),
+        None => pol.must_points.clone(),
+    };
+    if let Some(n) = params.must_limit {
+        log(&format!(
+            "[policy] 按设置取前 {} 个必经点（策略共 {} 个）",
+            n,
+            pol.must_points.len()
+        ));
+    }
     // 必经点保持策略顺序置于前端（waypoints[0] 即起点），剩余打卡点去重后按质心角
     // 排序；道路模式下两者都作为「必须经过」的硬约束。
-    let route_pts = crate::track::generate_road::merge_route_points(&pts_bd, &pol.must_points);
-    if !pol.must_points.is_empty() {
+    let route_pts = crate::track::generate_road::merge_route_points(&pts_bd, &must_points);
+    if !must_points.is_empty() {
         log(&format!(
             "√ [policy] 必经点 {} 个（保持顺序），合并后路线 waypoint 共 {} 个",
-            pol.must_points.len(),
+            must_points.len(),
             route_pts.len()
         ));
         // 逐点打印，便于与响应/轨迹核对：所有 must_points 都作为强制必经点，
         // 与起点重合的首点由路由层投影去重，不再被跳过。
-        for (i, &(mlat, mlon)) in pol.must_points.iter().enumerate() {
+        for (i, &(mlat, mlon)) in must_points.iter().enumerate() {
             log(&format!(
                 "  [policy] must_points[{i}] BD=({mlat:.6},{mlon:.6}){}",
                 if i == 0 { "（首个，若与起点重合则去重）" } else { "（必经点）" }
@@ -253,7 +267,7 @@ pub fn run_full_flow(
             };
             let fenced = crate::track::generate_road::apply_fences(&net, &fences);
             // 同上：全部必经点强制经过，起点重合点由 plan_track_route 去重
-            let must_bd: Vec<(f64, f64)> = pol.must_points.clone();
+            let must_bd: Vec<(f64, f64)> = must_points.clone();
             match crate::track::generate_road::build_track(
                 params.dist,
                 params.dur,

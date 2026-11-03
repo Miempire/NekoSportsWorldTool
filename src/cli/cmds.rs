@@ -23,6 +23,7 @@ fn allowed_flags(cmd: &str) -> Option<&'static [&'static str]> {
             "face",
             "seed",
             "route",
+            "must",
         ],
         "template" => &["file"],
         "ai" => &["sport", "mode", "score", "count", "minutes"],
@@ -320,6 +321,17 @@ fn cmd_run(rest: &[&str]) -> i32 {
     // 「开始 + 用时」不能越过当前时刻，否则提交会被服务端判为未来时间
     let start_ms = start_ms.min(now_ms() - dur * 1000 - 5_000);
 
+    let must_limit: Option<usize> = match get(&flags, "must") {
+        Some(v) => match v.parse::<usize>() {
+            Ok(n) => Some(n),
+            Err(_) => {
+                eprintln!("--must 需为 ≥0 的整数（收到 {v}）");
+                return;
+            }
+        },
+        None => None,
+    };
+
     println!(
         "参数：{:.0}m / {}s / 配速 {}:{:02}/km / 开始 {}",
         dist,
@@ -342,6 +354,7 @@ fn cmd_run(rest: &[&str]) -> i32 {
         track_outline: Vec::new(),
         // CLI 没有配速区间参数：以 --pace 为均值上下浮动 5s/km 作为范围
         pace_range: Some((pace_s as f64 - 5.0, pace_s as f64 + 5.0)),
+        must_limit,
     };
     match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
         Ok(out) => {

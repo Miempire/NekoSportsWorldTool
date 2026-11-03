@@ -80,6 +80,9 @@ pub struct Config {
     /// 路线算法：legacy | road | track。
     #[serde(default = "default_route_mode")]
     pub route_mode: String,
+    /// 只经过策略必经点的前 N 个；None=全部，Some(0)=不经过任何必经点。
+    #[serde(default)]
+    pub must_points_limit: Option<usize>,
 }
 
 fn default_route_mode() -> String {
@@ -123,6 +126,7 @@ impl Default for Config {
             update_check: default_update_check(),
             osm_path: String::new(),
             route_mode: default_route_mode(),
+            must_points_limit: None,
         }
     }
 }
