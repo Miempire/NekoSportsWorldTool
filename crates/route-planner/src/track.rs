@@ -6,8 +6,10 @@
 //!   - 开放 way 若回访了中间节点，取其中最长的一段闭合子环
 //!     （「引道 + 跑道」常画成一条 way）；
 //!   - 剩余开口 way 按节点共享建邻接表，反复剪掉度 ≤1 的悬空支路得到
-//!     2-core；然后在每个连通分量里用 DFS 找最长简单环，允许内部弦线、
-//!     允许多条 way 在公共节点交叉（不再强制所有节点度=2）。
+//!     2-core；然后在每个连通分量里做平面面遍历，取面积最大的简单面作为
+//!     外轮廓环（内部弦线只会切分出更小的面，不影响外边界），允许内部弦线、
+//!     允许多条 way 在公共节点交叉（不再强制所有节点度=2）；非平面分量回退
+//!     到有界 DFS 找最长简单环。
 
 use std::collections::{HashMap, HashSet};
 
@@ -342,10 +344,10 @@ pub fn track_candidates(g: &RoadGraph) -> Vec<TrackCandidate> {
         if comp.len() < 4 {
             continue;
         }
-        // 对每个分量，在其中找最长的简单环（允许分量内有度 ≥3 的节点，
+        // 对每个分量取外轮廓环（允许分量内有度 ≥3 的节点，
         // 即允许跑道上挂内部弦线、允许多条 way 在公共节点交叉）。
         // 不强制所有节点度=2——以前这会把有内弦的跑道整体丢弃。
-        let Some(ring) = find_longest_simple_cycle(&adj, &comp) else {
+        let Some(ring) = find_face_cycle(&id_map, &adj, &comp) else {
             continue;
         };
         if ring.len() < 4 {
@@ -394,19 +396,110 @@ fn dedup_ring_nodes(nodes: &[u64]) -> Vec<u64> {
     out
 }
 
-/// 在一个连通分量（2-core，节点度均 ≥2）中找最长的简单环。
+const DFS_BUDGET: usize = 200_000;
+const DFS_MAX_DEPTH: usize = 1024;
+
+/// 在一个连通分量（2-core）中取外轮廓环：按极角排序邻居后做平面面遍历，
+/// 每个有向边恰好属于一个面；取面积最大的简单面（即最外边界）。
+///
+/// 内部弦线只会把内部分成更小的面，不会改变外边界，因此不再需要穷举所有
+/// 简单环（最长简单环是 NP-hard，旧实现会在带多条弦线的分量上指数爆炸）。
+/// 若分量非平面（面遍历出现重复节点/不闭合），回退到有界 DFS。
+fn find_face_cycle(
+    id_map: &HashMap<u64, (Coord, NodeIndex)>,
+    adj: &HashMap<u64, Vec<u64>>,
+    comp: &[u64],
+) -> Option<Vec<u64>> {
+    let comp_set: HashSet<u64> = comp.iter().copied().collect();
+    let mut order: HashMap<u64, Vec<u64>> = HashMap::with_capacity(comp.len());
+    for &n in comp {
+        let Some((c0, _)) = id_map.get(&n).copied() else {
+            continue;
+        };
+        let mut nb: Vec<u64> = adj
+            .get(&n)
+            .map(|v| v.iter().copied().filter(|m| comp_set.contains(m)).collect())
+            .unwrap_or_default();
+        let angle = |m: u64| -> f64 {
+            id_map
+                .get(&m)
+                .map(|(c, _)| (c.lon - c0.lon).atan2(c.lat - c0.lat))
+                .unwrap_or(f64::NEG_INFINITY)
+        };
+        nb.sort_by(|&a, &b| {
+            angle(a)
+                .partial_cmp(&angle(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        nb.dedup();
+        order.insert(n, nb);
+    }
+
+    let mut used: HashSet<(u64, u64)> = HashSet::new();
+    let mut best: Option<(f64, Vec<u64>)> = None;
+    for &start in comp {
+        let nbrs = order.get(&start).cloned().unwrap_or_default();
+        for first in nbrs {
+            if used.contains(&(start, first)) {
+                continue;
+            }
+            let (mut a, mut b) = (start, first);
+            let mut walk: Vec<u64> = Vec::new();
+            let mut closed = false;
+            loop {
+                if !used.insert((a, b)) {
+                    break;
+                }
+                walk.push(a);
+                let Some(nb) = order.get(&b) else { break };
+                let Some(pos) = nb.iter().position(|&x| x == a) else { break };
+                // 极角排序下取上一条邻边，保证每个有向边只被一个面使用
+                let next = nb[(pos + nb.len() - 1) % nb.len()];
+                if b == start && next == first {
+                    closed = true;
+                    break;
+                }
+                a = b;
+                b = next;
+            }
+            if !closed || walk.len() < 4 {
+                continue;
+            }
+            let mut uniq: HashSet<u64> = HashSet::with_capacity(walk.len());
+            if !walk.iter().all(|x| uniq.insert(*x)) {
+                continue;
+            }
+            let coords: Vec<Coord> = walk
+                .iter()
+                .filter_map(|x| id_map.get(x).map(|(c, _)| *c))
+                .collect();
+            if coords.len() != walk.len() {
+                continue;
+            }
+            let area = signed_area(&coords).abs();
+            if best.as_ref().map(|(a, _)| area > *a).unwrap_or(true) {
+                best = Some((area, walk));
+            }
+        }
+    }
+    if let Some((_, ring)) = best {
+        return Some(ring);
+    }
+    find_longest_simple_cycle(adj, comp)
+}
+
+/// 非平面分量的兜底：在 2-core 分量中找最长的简单环。
 ///
 /// 允许分量内存在度 ≥3 的节点（内部弦线、多条 way 交叉），
 /// 通过对每个起点/方向做一次 DFS，在不重复访问节点的约束下找到
 /// 能回到起点的最长路径。若不存在简单环（分量是树或单边）则返回 None。
 ///
-/// 复杂度：O(|V| × (|V| + |E|)) 量级，跑道场景（几十节点）可忽略。
-fn find_longest_simple_cycle(
-    adj: &HashMap<u64, Vec<u64>>,
-    comp: &[u64],
-) -> Option<Vec<u64>> {
+/// 最长简单环是 NP-hard，这里用硬预算（展开次数 + 递归深度）截断，
+/// 保证病态分量不会把调用方（GUI 预览逐帧重算）卡死。
+fn find_longest_simple_cycle(adj: &HashMap<u64, Vec<u64>>, comp: &[u64]) -> Option<Vec<u64>> {
     let comp_set: HashSet<u64> = comp.iter().copied().collect();
     let mut best: Vec<u64> = Vec::new();
+    let mut budget = DFS_BUDGET;
 
     for &start in comp {
         let Some(start_nbrs) = adj.get(&start) else {
@@ -422,11 +515,17 @@ fn find_longest_simple_cycle(
             let mut visited: HashSet<u64> = HashSet::with_capacity(comp.len());
             visited.insert(start);
             visited.insert(first);
-            dfs_longest_cycle(adj, start, first, &mut path, &mut visited, &mut best);
+            dfs_longest_cycle(adj, start, first, &mut path, &mut visited, &mut best, &mut budget);
+            if budget == 0 {
+                break;
+            }
             // 早停：已经找到覆盖整个分量的环（不可能更长）
             if best.len() >= comp.len() {
                 return Some(best);
             }
+        }
+        if budget == 0 {
+            break;
         }
     }
     if best.len() >= 4 {
@@ -445,7 +544,12 @@ fn dfs_longest_cycle(
     path: &mut Vec<u64>,
     visited: &mut HashSet<u64>,
     best: &mut Vec<u64>,
+    budget: &mut usize,
 ) {
+    if *budget == 0 || path.len() > DFS_MAX_DEPTH {
+        return;
+    }
+    *budget -= 1;
     let Some(nbrs) = adj.get(&cur) else {
         return;
     };
@@ -461,17 +565,17 @@ fn dfs_longest_cycle(
     }
     // 再试未访问节点（延伸路径）
     for &n in nbrs {
+        if *budget == 0 {
+            return;
+        }
         if visited.contains(&n) || n == target {
             continue;
         }
         visited.insert(n);
         path.push(n);
-        dfs_longest_cycle(adj, target, n, path, visited, best);
+        dfs_longest_cycle(adj, target, n, path, visited, best, budget);
         path.pop();
         visited.remove(&n);
-        // 剪枝：当前 path 即使能走到终点也不可能超过 best
-        // （还剩多少未访问节点 = comp.len - path.len；
-        //  这条信息传不进来，就不剪枝了，跑道规模小）
     }
 }
 
@@ -777,9 +881,9 @@ mod tests {
     }
 
     #[test]
-    fn ambiguous_junction_is_not_offered() {
+    fn dangling_track_way_is_pruned_and_ring_kept() {
         let mut g = fixture();
-        // 第三条跑道 way 也接在节点 2 上：度 3，拼接歧义 → 不提供
+        // 第三条跑道 way 悬空挂在节点 2 上：度 1 支路应被剪掉，跑道环本身仍可用
         let n1 = g
             .graph
             .node_indices()
@@ -809,9 +913,9 @@ mod tests {
             sport: "running".into(),
             surface: String::new(),
         });
-        // 999 不在 id_map 里也无所谓（只有 2 参与度统计）
+        // 悬空支路剪除后，剩余 1-2-3-4 仍是唯一跑道环
         let cands = track_candidates(&g);
-        assert!(cands.is_empty(), "歧义拼接不应提供候选");
+        assert_eq!(cands.len(), 1, "悬空 track way 不应导致跑道环被丢弃");
     }
 
     #[test]
