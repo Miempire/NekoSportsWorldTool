@@ -119,7 +119,8 @@ impl Default for Config {
             dist_max: 1.5,
             pace_min: default_pace_min(),
             pace_max: default_pace_max(),
-            face_check: true,
+            // 官方：无抽检记录时 faceCheck=0；本工具不产抽检记录，默认必须是 0
+            face_check: false,
             manual_altitude: None,
             manual_altitude_range: None,
             ai_minutes: default_ai_minutes(),
@@ -283,7 +284,7 @@ impl ConfigBundle {
             config: load_config(),
             session: Some(load_session()),
             note: format!(
-                "Exported from NekoSportsWorldTool on {}",
+                "Exported from Miempire's RUN TOOL on {}",
                 Local::now().format("%Y-%m-%d %H:%M:%S")
             ),
         }

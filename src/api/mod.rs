@@ -1,8 +1,11 @@
 //! API 层：HTTP 客户端 + 各业务接口 + GT4 验证 + 全链编排。
 
+pub mod account;
 pub mod ai;
 pub mod cheat;
 pub mod client;
+pub mod deviceverify;
+pub mod facecheck;
 pub mod fence;
 pub mod flow;
 pub mod gt4;

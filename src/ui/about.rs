@@ -36,7 +36,7 @@ pub enum FinishAction {
 
 impl App {
     pub fn draw_about(&mut self, ui: &mut egui::Ui) {
-        ui.heading("RE-NKSWT(miempire修改版)");
+        ui.heading("Miempire's RUN TOOL");
         ui.add_space(6.0);
         ui.label(format!("当前版本：v{}", crate::platform::version_name()));
         let repo = crate::update::REPO_UPSTREAM;
@@ -47,7 +47,7 @@ impl App {
         ui.add_space(4.0);
         ui.colored_label(
             theme::text_dim(),
-            "手动更新：下载对应平台的新程序文件；Windows 用户退出软件后，用新的 nekosportsworldtool.exe 替换旧文件。",
+            "手动更新：下载对应平台的新程序文件；Windows 用户退出软件后，用新的 miempires-run-tool.exe 替换旧文件。",
         );
         ui.colored_label(
             theme::text_dim(),

@@ -9,7 +9,7 @@ use crate::api::client::{make_agent, ureq_err};
 
 pub const REPO_UPSTREAM: &str = "Miempire/NekoSportsWorldTool";
 
-const UA: &str = concat!("NekoSportsWorldTool/", env!("CARGO_PKG_VERSION"));
+const UA: &str = concat!("Miempires-RUN-TOOL/", env!("CARGO_PKG_VERSION"));
 
 /// Android 更新包落盘文件名（私有目录，ApkProvider 只暴露这一个文件）。
 pub const APK_NAME: &str = "update.apk";
@@ -28,11 +28,11 @@ fn repos() -> Vec<String> {
 /// 当前平台对应的 Release 资产名；无匹配产物的平台返回 None。
 pub fn asset_name() -> Option<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("windows", "x86_64") => Some("NekoSportsWorldTool-win-x64.zip"),
-        ("macos", "aarch64") => Some("NekoSportsWorldTool-macos-arm64.tar.gz"),
-        ("linux", "x86_64") => Some("NekoSportsWorldTool-linux-x64.tar.gz"),
-        ("linux", "aarch64") => Some("NekoSportsWorldTool-linux-aarch64.tar.gz"),
-        ("android", "aarch64") => Some("NekoSportsWorldTool-android-arm64.apk"),
+        ("windows", "x86_64") => Some("Miempires-RUN-TOOL-win-x64.zip"),
+        ("macos", "aarch64") => Some("Miempires-RUN-TOOL-macos-arm64.tar.gz"),
+        ("linux", "x86_64") => Some("Miempires-RUN-TOOL-linux-x64.tar.gz"),
+        ("linux", "aarch64") => Some("Miempires-RUN-TOOL-linux-aarch64.tar.gz"),
+        ("android", "aarch64") => Some("Miempires-RUN-TOOL-android-arm64.apk"),
         _ => None,
     }
 }
@@ -201,7 +201,7 @@ pub fn download(url: &str, mut progress: impl FnMut(u64, Option<u64>)) -> Result
 }
 
 /// 从发布包解出新程序二进制。桌面：zip 内找 *.exe（7z 打包带 target/
-/// 目录前缀，取最大的一条）；tar.gz 内找根级 nekosportsworldtool。
+/// 目录前缀，取最大的一条）；tar.gz 内找根级 miempires-run-tool。
 #[cfg(not(target_os = "android"))]
 pub fn extract(asset_name: &str, bytes: &[u8]) -> Result<Vec<u8>, String> {
     if asset_name.ends_with(".zip") {
@@ -264,7 +264,7 @@ fn extract_tar_gz(bytes: &[u8]) -> Result<Vec<u8>, String> {
             continue;
         }
         let path = e.path().map_err(|e| format!("tar 路径异常: {e}"))?;
-        if path.file_name().and_then(|n| n.to_str()) != Some("nekosportsworldtool") {
+        if path.file_name().and_then(|n| n.to_str()) != Some("miempires-run-tool") {
             continue;
         }
         let mut out = Vec::new();
@@ -352,14 +352,14 @@ mod tests {
                 })).collect::<Vec<_>>(),
             })
         };
-        let exact = pick_asset(&mk(&["NekoSportsWorldTool-win-x64.zip", "other.txt"]), "NekoSportsWorldTool-win-x64.zip");
-        assert_eq!(exact.unwrap().name, "NekoSportsWorldTool-win-x64.zip");
+        let exact = pick_asset(&mk(&["Miempires-RUN-TOOL-win-x64.zip", "other.txt"]), "Miempires-RUN-TOOL-win-x64.zip");
+        assert_eq!(exact.unwrap().name, "Miempires-RUN-TOOL-win-x64.zip");
         // 桌面产物必须精确匹配
-        assert!(pick_asset(&mk(&["wrong.zip"]), "NekoSportsWorldTool-win-x64.zip").is_none());
+        assert!(pick_asset(&mk(&["wrong.zip"]), "Miempires-RUN-TOOL-win-x64.zip").is_none());
         // APK 模糊匹配：先精确、再 arm64、再任意 apk
-        let apk = pick_asset(&mk(&["NekoSportsWorldTool-0.2.5-android.2-arm64.apk"]), "NekoSportsWorldTool-android-arm64.apk");
-        assert_eq!(apk.unwrap().name, "NekoSportsWorldTool-0.2.5-android.2-arm64.apk");
-        let any = pick_asset(&mk(&["app-arm64.apk", "plain.apk"]), "NekoSportsWorldTool-android-arm64.apk");
+        let apk = pick_asset(&mk(&["Miempires-RUN-TOOL-0.2.5-android.2-arm64.apk"]), "Miempires-RUN-TOOL-android-arm64.apk");
+        assert_eq!(apk.unwrap().name, "Miempires-RUN-TOOL-0.2.5-android.2-arm64.apk");
+        let any = pick_asset(&mk(&["app-arm64.apk", "plain.apk"]), "Miempires-RUN-TOOL-android-arm64.apk");
         assert_eq!(any.unwrap().name, "app-arm64.apk");
     }
 
@@ -371,7 +371,7 @@ mod tests {
             let mut w = zip::ZipWriter::new(&mut buf);
             let opt = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Stored);
-            w.start_file("target/x86_64-pc-windows-msvc/release/nekosportsworldtool.exe", opt).unwrap();
+            w.start_file("target/x86_64-pc-windows-msvc/release/miempires-run-tool.exe", opt).unwrap();
             std::io::Write::write_all(&mut w, b"BIN_CONTENT").unwrap();
             w.start_file("readme.txt", opt).unwrap();
             std::io::Write::write_all(&mut w, b"ignore").unwrap();
@@ -379,7 +379,7 @@ mod tests {
         }
         let bytes = buf.into_inner();
         assert_eq!(extract_zip(&bytes).unwrap(), b"BIN_CONTENT");
-        assert_eq!(extract("NekoSportsWorldTool-win-x64.zip", &bytes).unwrap(), b"BIN_CONTENT");
+        assert_eq!(extract("Miempires-RUN-TOOL-win-x64.zip", &bytes).unwrap(), b"BIN_CONTENT");
     }
 
     #[cfg(not(target_os = "android"))]
@@ -394,11 +394,11 @@ mod tests {
             hdr.set_size(content.len() as u64);
             hdr.set_mode(0o755);
             hdr.set_cksum();
-            tar.append_data(&mut hdr, "nekosportsworldtool", content).unwrap();
+            tar.append_data(&mut hdr, "miempires-run-tool", content).unwrap();
             let gz = tar.into_inner().unwrap();
             gz.finish().unwrap();
         }
         assert_eq!(extract_tar_gz(&bytes).unwrap(), b"BIN_CONTENT");
-        assert_eq!(extract("NekoSportsWorldTool-linux-x64.tar.gz", &bytes).unwrap(), b"BIN_CONTENT");
+        assert_eq!(extract("Miempires-RUN-TOOL-linux-x64.tar.gz", &bytes).unwrap(), b"BIN_CONTENT");
     }
 }

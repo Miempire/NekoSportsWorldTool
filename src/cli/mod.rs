@@ -16,17 +16,27 @@ pub fn main(args: Vec<String>) -> i32 {
 
 fn usage() {
     println!(
-        r#"NekoSportsWorldTool CLI v{}（full 构建无参数启动 GUI）
+        r#"Miempire's RUN TOOL CLI v{}（full 构建无参数启动 GUI）
 
-用法：nekosportsworldtool <命令> [选项]
-      nekosportsworldtool help [命令]   查看命令详情
-      nekosportsworldtool --version     显示版本
+用法：miempires-run-tool <命令> [选项]
+      miempires-run-tool help [命令]   查看命令详情
+      miempires-run-tool --version     显示版本
 
 账号
   login    --user <手机号> --pass <密码> [--remember]
            登录并保存会话；--remember 同时保存凭据，供会话失效时自动重登
-           未给 --user/--pass 时读取环境变量 NEKO_USER / NEKO_PASS（适合青龙等定时任务）
+           未给 --user/--pass 时读取环境变量 MRT_USER / MRT_PASS（适合青龙等定时任务）
   logout    登出并清理本地会话
+  send-code --phone <手机号> [--type 5]
+           发送短信验证码（默认 type=5，注销账号用；会先过 GT4）
+  unregister --code <验证码> --yes
+           注销账号（不可逆）：POST api/v61300/user/userLogout
+  device-verify --token <geeToken> [--rrid n] [--uuid s] [--error-code n]
+           上报极验回执到 partner.iydsj.com（默认不自动发）
+  facecheck --photo <照片路径> [--status n]
+           上传抽检照片（partner 域，Multipart 仅 file 一个 part）
+  run-pv   --unid <n> --uuid <s> --details <JSON数组>
+           上报抽检记录明细（api/v70240/run/pv）
 
 跑步
   run      [--dist km] [--pace 秒/km|分:秒] [--altitude 米|最小-最大]
@@ -84,9 +94,41 @@ pub(crate) fn usage_cmd(cmd: &str) -> bool {
              \n  --user      账号（手机号）\n\
              \n  --pass      密码\n\
              \n  --remember  同时把凭据落盘，之后会话失效会自动重登\n\
-             \n  未给 --user/--pass 时读取环境变量 NEKO_USER / NEKO_PASS。"
+             \n  未给 --user/--pass 时读取环境变量 MRT_USER / MRT_PASS。"
         }
         "logout" => "logout\n\n  登出并清理本地会话（凭据保留与否见 login --remember）。",
+        "send-code" => {
+            "send-code --phone <手机号> [--type 5]\n\
+             \n  发送短信验证码。默认 type=5（VerCodeDeleteUser，注销账号用）。\n\
+             \n  流程：GT4(REGISTER) → POST api/v70270/security/geevalidate\n\
+             \x20        → POST api/v75/users/check/code {phone,type,uuid,sign}"
+        }
+        "unregister" => {
+            "unregister --code <验证码> --yes\n\
+             \n  --code  短信验证码（先用 send-code 获取）\n\
+             \n  --yes   确认注销（不可逆）\n\
+             \n  接口：POST api/v61300/user/userLogout，body {code}"
+        }
+        "device-verify" => {
+            "device-verify --token <geeToken> [--rrid n] [--uuid s] [--error-code n]\n\
+             \n  上报极验回执：POST partner.iydsj.com/api/v620/datacollection/geetest/deviceVerify\n\
+             \n  --token       DeepKnow/极验生成的 geeToken（必填）\n\
+             \n  --rrid        关联跑步记录，缺省 -1（不写该字段）\n\
+             \n  --uuid        会话 uuid，空则不写\n\
+             \n  --error-code  缺省 0"
+        }
+        "facecheck" => {
+            "facecheck --photo <照片路径> [--status n]\n\
+             \n  上传抽检照片：POST https://partner.iydsj.com/api/v70100/run/facecheck/save?status=<n>\n\
+             \x20  Multipart 只有一个 part：file=<照片>；body 不加密、响应不解密\n\
+             \n  仅在学校开启 runFaceCheckConfig 时需要"
+        }
+        "run-pv" => {
+            "run-pv --unid <n> --uuid <s> --details <JSON数组>\n\
+             \n  上报抽检记录明细：POST api/v70240/run/pv\n\
+             \n  --details 形如 [{\"type\":1,\"distance\":123,\"verifyType\":1,\"checkStatus\":true,\"failureReason\":0}]\n\
+             \x20  缺省为空数组"
+        }
         "run" => {
             "run [--dist km] [--pace 秒/km|分:秒] [--altitude 米|最小-最大]\n\
              \x20   [--ago 分钟 | --days-ago 0-3 --time HH:MM]\n\
@@ -141,7 +183,7 @@ pub(crate) fn usage_cmd(cmd: &str) -> bool {
         "export-bundle" => {
             "export-bundle [--file path] [--include-session]\n\
              \n  把 identity.json + config.json 打包成单个 JSON 文件。\n\
-             \n  --file              输出路径；缺省用时间戳命名（nekosportsworld-config-YYYYMMDD-HHMMSS.json）\n\
+             \n  --file              输出路径；缺省用时间戳命名（miempires-run-tool-config-YYYYMMDD-HHMMSS.json）\n\
              \n  --include-session   同时把 session.json 里的登录 token 一并导出（分享给他人前请先登录态）"
         }
         "import-bundle" => {
@@ -235,21 +277,21 @@ pub(crate) fn silent() -> impl FnMut(&str) {
     |_s: &str| {}
 }
 
-/// 自动登录用的凭据：已记住的账号优先，其次环境变量 NEKO_USER / NEKO_PASS。
+/// 自动登录用的凭据：已记住的账号优先，其次环境变量 MRT_USER / MRT_PASS。
 pub(crate) fn creds() -> Option<(String, String)> {
     let cfg = model::load_config();
     if cfg.remember && !cfg.username.is_empty() && !cfg.password.is_empty() {
         return Some((cfg.username, cfg.password));
     }
     let env = |k: &str| std::env::var(k).ok().filter(|s| !s.trim().is_empty());
-    Some((env("NEKO_USER")?, env("NEKO_PASS")?))
+    Some((env("MRT_USER")?, env("MRT_PASS")?))
 }
 
 /// 自动登录（GUI 记住密码 / login --remember 落盘的凭据 / 环境变量）。
 pub(crate) fn auto_login(identity: &model::HeaderIdentity) -> Result<Session, String> {
     let Some((user, pass)) = creds() else {
         return Err(
-            "未登录：先执行 login 子命令，或设置环境变量 NEKO_USER / NEKO_PASS，或在 GUI 勾选记住密码"
+            "未登录：先执行 login 子命令，或设置环境变量 MRT_USER / MRT_PASS，或在 GUI 勾选记住密码"
                 .into(),
         );
     };

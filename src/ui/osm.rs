@@ -130,8 +130,8 @@ impl App {
             super::map::legend(
                 ui,
                 &[
-                    ("道路", egui::Color32::from_rgb(190, 200, 196)),
-                    ("建筑", egui::Color32::from_rgb(214, 182, 158)),
+                    ("道路", theme::map_road()),
+                    ("建筑", theme::map_building()),
                 ],
             );
         }
@@ -158,13 +158,9 @@ impl App {
             }
         }
 
-        painter.rect_filled(
-            canvas,
-            egui::Rounding::ZERO,
-            egui::Color32::from_rgb(250, 252, 251),
-        );
+        painter.rect_filled(canvas, egui::Rounding::ZERO, theme::map_bg());
         if let Some(net) = &self.network {
-            let road_color = egui::Color32::from_rgb(190, 200, 196);
+            let road_color = theme::map_road();
             for e in net.edges_deg() {
                 self.osm_page.map.draw_polyline(
                     &painter,
@@ -174,7 +170,7 @@ impl App {
                     1.0,
                 );
             }
-            let bld_color = egui::Color32::from_rgb(214, 182, 158);
+            let bld_color = theme::map_building();
             for b in &net.buildings {
                 self.osm_page
                     .map
@@ -186,7 +182,7 @@ impl App {
                 egui::Align2::CENTER_CENTER,
                 "加载 OSM 路网后可预览道路与建筑",
                 egui::FontId::proportional(14.0),
-                egui::Color32::from_rgb(150, 160, 156),
+                theme::map_muted(),
             );
         }
 

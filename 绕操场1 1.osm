@@ -676,6 +676,8 @@
   <node id='-27695' action='modify' visible='true' lat='43.92323572849' lon='126.56301068835'>
     <tag k='building' v='wall' />
   </node>
+  <node id='-27773' action='modify' visible='true' lat='43.92197280701' lon='126.56355209582' />
+  <node id='-27774' action='modify' visible='true' lat='43.9219472086' lon='126.56361713938' />
   <way id='-581' action='modify' visible='true'>
     <nd ref='-26132' />
     <nd ref='-26133' />
@@ -739,6 +741,7 @@
     <nd ref='-27226' />
     <nd ref='-26153' />
     <tag k='highway' v='track' />
+    <tag k='leisure' v='track' />
   </way>
   <way id='-824' action='modify' visible='true'>
     <nd ref='-26187' />
@@ -832,7 +835,7 @@
     <nd ref='-27249' />
     <nd ref='-27250' />
     <nd ref='-27238' />
-    <tag k='highway' v='footway' />
+    <tag k='leisure' v='track' />
   </way>
   <way id='-1354' action='modify' visible='true'>
     <nd ref='-26808' />
@@ -900,6 +903,9 @@
     <tag k='highway' v='footway' />
   </way>
   <way id='-1567' action='modify' visible='true'>
+    <nd ref='-27275' />
+    <nd ref='-27774' />
+    <nd ref='-27773' />
     <nd ref='-27103' />
     <nd ref='-27104' />
     <nd ref='-27105' />

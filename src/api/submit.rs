@@ -155,7 +155,13 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
     body.insert("totalSteps".into(), Value::from(total_steps));
     body.insert("avgStepFreq".into(), Value::from(avg_step_freq));
     body.insert("useMobilityTools".into(), Value::from(0));
-    body.insert("faceCheck".into(), Value::from(p.face_check));
+    // 官方语义：faceCheck 与 OBS runFaceCheck 必须同源一致。
+    // 本工具不产抽检记录（runFaceCheck 恒空串），因此强制 0；
+    // 若显式传 --face 1，只提示不写入，避免制造官方不存在的矛盾组合。
+    if p.face_check > 0 {
+        log("⚠ [submit] 未实现抽检记录，faceCheck 强制为 0（避免与 runFaceCheck 空串矛盾）");
+    }
+    body.insert("faceCheck".into(), Value::from(0));
     body.insert("totalAscent".into(), Value::from(round_to(ascent, 0) as i64));
     body.insert("avgPower".into(), Value::from(power));
     body.insert("speedPerTenSec".into(), Value::Array(android_tensec(track, start_ms, "speed")));

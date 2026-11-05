@@ -92,6 +92,50 @@ impl ApiClient {
         Ok(RequestOutcome { http_status: status, decrypted, raw_len, raw_head })
     }
 
+    /// 发送原始字节体（Multipart 等）。headerSign 仍按信封链生成，
+    /// body 本身不做信封加密（抽检照片上传就是这种形态）。
+    pub fn raw_request(
+        &mut self,
+        method: &str,
+        url: &str,
+        body: Vec<u8>,
+        content_type: &str,
+        ua: &str,
+        extra_headers: &[(String, String)],
+    ) -> Result<RequestOutcome, String> {
+        let uid = self.uid();
+        let token = self.token();
+        let (header_plain, _) = build_header_for(&self.identity, uid, &token, None);
+        let header_env = build_envelope(&mut self.session, &header_plain, OuterOrder::Observed);
+
+        let mut req = self.agent.request(method, url);
+        req = req.set("Content-Type", content_type);
+        req = req.set("User-Agent", ua);
+        req = req.set("appVersion", IOS_APP_VERSION);
+        req = req.set("headerSign", &header_env.json);
+        for (k, v) in extra_headers {
+            req = req.set(k, v);
+        }
+        let resp = req.send_bytes(&body).map_err(ureq_err)?;
+        let status = resp.status();
+        let raw = resp.into_string().unwrap_or_default();
+        let raw_len = raw.len();
+        let key = derive_paes_key(
+            &header_env.key_data[0],
+            &header_env.key_data[1],
+            &header_env.key_data[2],
+            &header_env.key_data[3],
+        );
+        let (decrypted, raw_head) = match decrypt_response(raw.as_bytes(), &key, &rsa_public_key()) {
+            Ok(d) => (Some(d), String::new()),
+            Err(e) => (
+                None,
+                format!("{e} | 原文: {}", crate::textlog::truncate(&raw, 160)),
+            ),
+        };
+        Ok(RequestOutcome { http_status: status, decrypted, raw_len, raw_head })
+    }
+
     /// 标准业务请求（RUN 域名）：返回业务 JSON；error != 10000 时 Err。
     pub fn call(
         &mut self,

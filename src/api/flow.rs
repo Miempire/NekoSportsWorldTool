@@ -362,6 +362,26 @@ pub fn run_full_flow(
     let result = submit_record(client, &sp, log)?;
     sleep_secs(1);
 
+    // ⑤.5 极验回执（官方在 requestFivePoint.onSuccess 后上报；默认不发）
+    if std::env::var("MRT_DEVICE_VERIFY").ok().as_deref() == Some("1") {
+        match std::env::var("MRT_GEE_TOKEN") {
+            Ok(token) if !token.trim().is_empty() => {
+                log("[deviceverify] 上报极验回执…");
+                match super::deviceverify::device_verify(
+                    client,
+                    token.trim(),
+                    result.rrid,
+                    Some(result.uuid.as_str()),
+                    0,
+                ) {
+                    Ok(_) => log("√ [deviceverify] 上报成功"),
+                    Err(e) => log(&format!("⚠ [deviceverify] 上报失败: {e}")),
+                }
+            }
+            _ => log("⚠ [deviceverify] 已开启但未提供 MRT_GEE_TOKEN，跳过"),
+        }
+    }
+
     // ⑥ OBS 上传（双 key）
     log("[obs] 上传 OBS 对象（gzip+base64，10 键）…");
     // 从提交结果回填 track.startTime（含随机秒偏移），保证 body/OBS/flag 全链一致

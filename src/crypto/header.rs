@@ -7,11 +7,14 @@ use super::envelope::{md5_hex, now_ms};
 /// tokenSign 固定后缀（与 Android 签名盐同源）。
 pub const TOKEN_SIGN_SUFFIX: &str = "2slhe02lsfiwowlcixisla_sls-_slaor";
 
-pub const IOS_APP_VERSION: &str = "7.3.91";
-pub const ANDROID_APP_VERSION: &str = "7.3.91";
+// 目标客户端版本：7.4.0（versionCode 408）。
+// 提交体/签名头与 7.3.93 一致，升版本号只是为了和新客户端对齐；
+// 若服务端因版本差异拒绝，可改回 "7.3.93"。
+pub const IOS_APP_VERSION: &str = "7.4.0";
+pub const ANDROID_APP_VERSION: &str = "7.4.0";
 
-pub const UA_IOS: &str = "SWCampus/7.3.91 (iPhone; iOS 18.1; Scale/3.00)";
-pub const UA_ANDROID: &str = "Mozilla/5.0 (Linux; Android 14; 22081212C Build/UKQ1.231003.002) AppleWebKit/537.36 SWCampus/7.3.91";
+pub const UA_IOS: &str = "SWCampus/7.4.0 (iPhone; iOS 18.1; Scale/3.00)";
+pub const UA_ANDROID: &str = "Mozilla/5.0 (Linux; Android 14; 22081212C Build/UKQ1.231003.002) AppleWebKit/537.36 SWCampus/7.4.0";
 
 /// 设备身份。app_install_time <= 0 表示尚未生成。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

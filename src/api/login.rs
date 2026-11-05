@@ -16,9 +16,18 @@ pub const GEECHECK_PATH: &str = "/api/v65/security/checkGeeUse";
 pub const LOGIN_PATH: &str = "/api/v70100/login";
 pub const LOGOUT_PATH: &str = "/api/v6/user/logout";
 
-/// bizType=0 的 captchaId（captchaIDForBizType 静态提取值；GT4 会话直接使用，
-/// 走 v31 geepreprocess 属 Android GT3 旧链，iOS 登录链不引用）。
+/// iOS/GT3 链的 bizType=0 captchaId（原有默认值，iOS 身份继续用它）。
 pub const CAPTCHA_ID_BIZ0: &str = "8c065103d81f5fd3efec8ad3e3a84c30";
+
+/// 按身份选择登录 captchaId：Android 客户端用资源 gt4_captcha_login 的值
+/// （`3b02ad39…`），iOS 沿用原 `8c065103…`，避免互相串链导致 10003。
+fn login_captcha_id(platform: &str) -> &'static str {
+    if platform == "android" {
+        crate::api::account::LOGIN_CAPTCHA_ID
+    } else {
+        CAPTCHA_ID_BIZ0
+    }
+}
 
 /// checkGeeUse 免验证码探测：data=true 时本次登录可跳过 GT4 与 geevalidate。
 /// 未登录态调用（uid=-1/token=""）；请求异常一律按 false 走原流程。
@@ -59,7 +68,7 @@ pub fn login(
         log("[login] 免验证码路径：直接登录");
     } else {
         // GT4 → geevalidate；10003（验证失败）时重破滑块再验，最多 3 轮
-        let captcha_id = CAPTCHA_ID_BIZ0;
+        let captcha_id = login_captcha_id(&client.identity.platform);
         let mut validated = false;
         for attempt in 1..=3 {
             log("[login] 开始 GT4 滑块验证…"); 

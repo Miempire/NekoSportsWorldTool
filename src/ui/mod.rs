@@ -114,8 +114,11 @@ impl eframe::App for App {
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
 
         // ── 顶栏 ────────────────────────────────────────────────
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-            ui.add_space(6.0);
+        egui::TopBottomPanel::top("top_bar")
+            .frame(theme::top_frame())
+            .show(ctx, |ui| {
+            theme::brand(ui, self.session.is_some());
+            ui.add_space(2.0);
             let compact = mobile::compact_ui(ui);
             let logged = self.session.is_some();
             let btn_text = if logged { "登出" } else { "登录" };
@@ -210,10 +213,14 @@ impl eframe::App for App {
                 }
             }
             ui.add_space(4.0);
+            theme::paint_bottom_line(ui);
+            theme::paint_corners(ui);
         });
 
         // ── 底部状态栏 ──────────────────────────────────────────
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+        egui::TopBottomPanel::bottom("status_bar")
+            .frame(theme::status_frame())
+            .show(ctx, |ui| {
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 ui.label(format!("日志 {} 行", self.log.len()));
@@ -262,12 +269,15 @@ impl eframe::App for App {
                 });
             });
             ui.add_space(2.0);
+            theme::paint_top_line(ui);
+            theme::paint_corners(ui);
         });
 
         // ── 标签页 ──────────────────────────────────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
+            theme::paint_grid(ui);
             mobile::tab_bar(ui, &mut self.tab);
-            ui.separator();
+            theme::accent_separator(ui);
             match self.tab {
                 0 => self.draw_run(ui),
                 1 => self.draw_ai(ui),

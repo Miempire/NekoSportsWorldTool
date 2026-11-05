@@ -13,6 +13,11 @@ fn allowed_flags(cmd: &str) -> Option<&'static [&'static str]> {
     Some(match cmd {
         "login" => &["user", "pass", "remember"],
         "logout" => &[],
+        "send-code" => &["phone", "type"],
+        "unregister" => &["code", "yes"],
+        "device-verify" => &["token", "rrid", "uuid", "error-code"],
+        "facecheck" => &["status", "photo"],
+        "run-pv" => &["unid", "uuid", "details"],
         "run" => &[
             "dist",
             "pace",
@@ -62,7 +67,7 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         let flags = parse_flags(&rest);
         if let Err(e) = reject_unknown(&flags, allowed) {
             eprintln!("{e}");
-            eprintln!("查看用法：nekosportsworldtool help {cmd}");
+            eprintln!("查看用法：miempires-run-tool help {cmd}");
             return 1;
         }
     }
@@ -70,6 +75,11 @@ pub fn dispatch(args: Vec<String>) -> i32 {
     match cmd.as_str() {
         "login" => cmd_login(&rest),
         "logout" => cmd_logout(),
+        "send-code" => cmd_send_code(&rest),
+        "unregister" => cmd_unregister(&rest),
+        "device-verify" => cmd_device_verify(&rest),
+        "facecheck" => cmd_facecheck(&rest),
+        "run-pv" => cmd_run_pv(&rest),
         "run" => cmd_run(&rest),
         "template" => cmd_template(&rest),
         "ai" => cmd_ai(&rest),
@@ -89,7 +99,7 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         "import-bundle" => cmd_import_bundle(&rest),
         "version" | "--version" | "-V" | "-v" => {
             println!(
-                "NekoSportsWorldTool v{}（{}）",
+                "Miempire's RUN TOOL v{}（{}）",
                 crate::update::current_version(),
                 if cfg!(feature = "gui") { "full" } else { "cli" }
             );
@@ -121,15 +131,15 @@ fn cmd_login(rest: &[&str]) -> i32 {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-        .or_else(|| env("NEKO_USER"));
+        .or_else(|| env("MRT_USER"));
     let pass = get(&flags, "pass")
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-        .or_else(|| env("NEKO_PASS"));
+        .or_else(|| env("MRT_PASS"));
     let (Some(user), Some(pass)) = (user, pass) else {
-        eprintln!("缺少 --user / --pass（也可用环境变量 NEKO_USER / NEKO_PASS）");
-        eprintln!("查看用法：nekosportsworldtool help login");
+        eprintln!("缺少 --user / --pass（也可用环境变量 MRT_USER / MRT_PASS）");
+        eprintln!("查看用法：miempires-run-tool help login");
         return 1;
     };
     let identity = model::load_identity();
@@ -164,6 +174,174 @@ fn cmd_logout() -> i32 {
     let mut log = logger();
     crate::api::login::logout(&mut client, &mut log);
     0
+}
+
+/// 发送短信验证码（默认 type=5，注销账号用）。
+fn cmd_send_code(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let Some(phone) = get(&flags, "phone").map(str::trim).filter(|s| !s.is_empty()) else {
+        eprintln!("缺少 --phone（验证码发往的手机号）");
+        return 1;
+    };
+    let code_type = get(&flags, "type")
+        .and_then(|v| v.parse::<i32>().ok())
+        .unwrap_or(crate::api::account::VER_CODE_DELETE_USER);
+    let identity = model::load_identity();
+    let mut client = ApiClient::new(identity, None);
+    let mut log = logger();
+    match crate::api::account::send_ver_code(&mut client, phone, code_type, &mut log) {
+        Ok(biz) => {
+            println!("验证码已发送: {}", crate::textlog::clean(&biz.to_string()));
+            0
+        }
+        Err(e) => {
+            eprintln!("发送失败: {e}");
+            1
+        }
+    }
+}
+
+/// 注销账号（不可逆，必须显式 --yes）。
+fn cmd_unregister(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let Some(code) = get(&flags, "code").map(str::trim).filter(|s| !s.is_empty()) else {
+        eprintln!("缺少 --code（短信验证码，先用 send-code 获取）");
+        return 1;
+    };
+    if get(&flags, "yes").is_none() {
+        eprintln!("注销不可逆。确认执行请追加 --yes");
+        return 1;
+    }
+    let mut client = match make_client() {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    match crate::api::account::unregister(&mut client, code) {
+        Ok(biz) => {
+            println!("注销响应: {}", crate::textlog::clean(&biz.to_string()));
+            if biz.get("error").and_then(|v| v.as_i64()).unwrap_or(0) == 10000 {
+                0
+            } else {
+                2
+            }
+        }
+        Err(e) => {
+            eprintln!("注销失败: {e}");
+            1
+        }
+    }
+}
+
+/// 上报极验回执（deviceVerify）。
+fn cmd_device_verify(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let Some(token) = get(&flags, "token").map(str::trim).filter(|s| !s.is_empty()) else {
+        eprintln!("缺少 --token（DeepKnow/极验生成的 geeToken）");
+        return 1;
+    };
+    let rrid = get(&flags, "rrid")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(-1);
+    let uuid = get(&flags, "uuid").map(str::trim).filter(|s| !s.is_empty());
+    let error_code = get(&flags, "error-code")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    let mut client = match make_client() {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    match crate::api::deviceverify::device_verify(&mut client, token, rrid, uuid, error_code) {
+        Ok(biz) => {
+            println!("deviceVerify: {}", crate::textlog::clean(&biz.to_string()));
+            0
+        }
+        Err(e) => {
+            eprintln!("deviceVerify 失败: {e}");
+            1
+        }
+    }
+}
+
+/// 上传一次人脸抽检照片（partner 域，Multipart 仅 file 一个 part）。
+fn cmd_facecheck(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let Some(photo_path) = get(&flags, "photo").map(str::trim).filter(|s| !s.is_empty()) else {
+        eprintln!("缺少 --photo <照片路径>");
+        return 1;
+    };
+    let photo = match std::fs::read(photo_path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("读取照片失败: {e}");
+            return 1;
+        }
+    };
+    let photo_name = std::path::Path::new(photo_path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("photo.jpg");
+    let status = get(&flags, "status")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    let mut client = match make_client() {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    match crate::api::facecheck::upload(&mut client, status, &photo, photo_name) {
+        Ok(biz) => {
+            println!("facecheck: {}", crate::textlog::clean(&biz.to_string()));
+            0
+        }
+        Err(e) => {
+            eprintln!("facecheck 失败: {e}");
+            1
+        }
+    }
+}
+
+/// 上报抽检记录明细（api/v70240/run/pv）。
+fn cmd_run_pv(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let unid = get(&flags, "unid")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(0);
+    let uuid = get(&flags, "uuid").unwrap_or("");
+    let details = match get(&flags, "details") {
+        Some(text) => match serde_json::from_str::<serde_json::Value>(text) {
+            Ok(value) => value,
+            Err(e) => {
+                eprintln!("--details 不是合法 JSON: {e}");
+                return 1;
+            }
+        },
+        None => serde_json::json!([]),
+    };
+    let mut client = match make_client() {
+        Ok(client) => client,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    match crate::api::facecheck::upload_record_details(&mut client, unid, uuid, details) {
+        Ok(biz) => {
+            println!("run/pv: {}", crate::textlog::clean(&biz.to_string()));
+            0
+        }
+        Err(e) => {
+            eprintln!("run/pv 失败: {e}");
+            1
+        }
+    }
 }
 
 fn cmd_run(rest: &[&str]) -> i32 {
@@ -933,7 +1111,7 @@ fn cmd_rank(rest: &[&str]) -> i32 {
         "main" | "indoor" | "history" => kind,
         other => {
             eprintln!("未知榜单类型: {other}（可选 main | indoor | history）");
-            eprintln!("查看用法：nekosportsworldtool help rank");
+            eprintln!("查看用法：miempires-run-tool help rank");
             return 1;
         }
     };
@@ -946,7 +1124,7 @@ fn cmd_rank(rest: &[&str]) -> i32 {
     };
     if let Err(e) = reject_unknown(&flags, allowed) {
         eprintln!("{e}");
-        eprintln!("查看用法：nekosportsworldtool help rank");
+        eprintln!("查看用法：miempires-run-tool help rank");
         return 1;
     }
     let gender: Option<i64> = match get(&flags, "gender") {
@@ -1120,7 +1298,7 @@ fn cmd_update(rest: &[&str]) -> i32 {
 fn cmd_export_bundle(rest: &[&str]) -> i32 {
     let flags = parse_flags(rest);
     let default = format!(
-        "nekosportsworld-config-{}.json",
+        "miempires-run-tool-config-{}.json",
         chrono::Local::now().format("%Y%m%d-%H%M%S")
     );
     let out = get(&flags, "file").unwrap_or(&default);
@@ -1148,7 +1326,7 @@ fn cmd_import_bundle(rest: &[&str]) -> i32 {
     let flags = parse_flags(rest);
     let Some(file) = get(&flags, "file") else {
         eprintln!("缺少 --file <path>");
-        eprintln!("查看用法：nekosportsworldtool help import-bundle");
+        eprintln!("查看用法：miempires-run-tool help import-bundle");
         return 1;
     };
     let path = std::path::PathBuf::from(file);

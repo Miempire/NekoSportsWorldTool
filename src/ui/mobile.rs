@@ -84,10 +84,20 @@ pub fn tab_bar(ui: &mut egui::Ui, selected: &mut usize) -> Vec<egui::Response> {
         let width = ((ui.available_width() - spacing * 3.0) / 4.0).max(68.0);
         ui.horizontal_wrapped(|ui| {
             for (index, label) in TABS.into_iter().enumerate() {
+                let active = *selected == index;
                 let response = ui.add_sized(
                     [width, TOUCH_HEIGHT],
-                    egui::SelectableLabel::new(*selected == index, label),
+                    super::theme::tab_button(active, label),
                 );
+                if active {
+                    super::theme::paint_tab_accent(ui, response.rect);
+                } else if response.hovered() {
+                    ui.painter().rect_stroke(
+                        response.rect,
+                        egui::Rounding::same(3.0),
+                        egui::Stroke::new(1.0, super::theme::accent_dim()),
+                    );
+                }
                 if response.clicked() {
                     *selected = index;
                 }
@@ -97,7 +107,21 @@ pub fn tab_bar(ui: &mut egui::Ui, selected: &mut usize) -> Vec<egui::Response> {
     } else {
         ui.horizontal(|ui| {
             for (index, label) in TABS.into_iter().enumerate() {
-                responses.push(ui.selectable_value(selected, index, label));
+                let active = *selected == index;
+                let response = ui.add(super::theme::tab_button(active, label));
+                if active {
+                    super::theme::paint_tab_accent(ui, response.rect);
+                } else if response.hovered() {
+                    ui.painter().rect_stroke(
+                        response.rect,
+                        egui::Rounding::same(3.0),
+                        egui::Stroke::new(1.0, super::theme::accent_dim()),
+                    );
+                }
+                if response.clicked() {
+                    *selected = index;
+                }
+                responses.push(response);
             }
         });
     }

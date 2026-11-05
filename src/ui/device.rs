@@ -188,7 +188,7 @@ impl App {
                 if ui.button("导出全部参数…").clicked() {
                     let path = rfd::FileDialog::new()
                         .add_filter("配置包", &["json"])
-                        .set_file_name("nekosportsworld-config.json")
+                        .set_file_name("miempires-run-tool-config.json")
                         .set_title("导出设备身份 + 跑步参数（不含登录会话）")
                         .save_file();
                     if let Some(p) = path {

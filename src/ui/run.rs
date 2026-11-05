@@ -676,12 +676,12 @@ impl App {
             super::map::legend(
                 ui,
                 &[
-                    ("道路", egui::Color32::from_rgb(200, 208, 204)),
-                    ("建筑", egui::Color32::from_rgb(224, 194, 170)),
-                    ("路线", egui::Color32::from_rgb(30, 111, 216)),
-                    ("打卡点", egui::Color32::from_rgb(240, 180, 0)),
-                    ("起点", egui::Color32::from_rgb(22, 160, 90)),
-                    ("终点", egui::Color32::from_rgb(220, 38, 38)),
+                    ("道路", theme::map_road()),
+                    ("建筑", theme::map_building()),
+                    ("路线", theme::map_route()),
+                    ("打卡点", theme::map_checkpoint()),
+                    ("起点", theme::map_start()),
+                    ("终点", theme::map_end()),
                 ],
             );
         }
@@ -693,11 +693,7 @@ impl App {
             egui::Sense::drag(),
         );
         let canvas = response.rect;
-        painter.rect_filled(
-            canvas,
-            egui::Rounding::ZERO,
-            egui::Color32::from_rgb(250, 252, 251),
-        );
+        painter.rect_filled(canvas, egui::Rounding::ZERO, theme::map_bg());
 
         // 首次预览后适配视野：优先以电子围栏为中点/范围，无围栏时退化为路线+打卡点+道路
         if !self.run_page.map_fitted {
@@ -719,29 +715,29 @@ impl App {
         }
 
         if let Some(p) = &self.run_page.preview {
-            let road = egui::Color32::from_rgb(200, 208, 204);
+            let road = theme::map_road();
             for e in &p.edges {
                 self.run_page
                     .map
                     .draw_polyline(&painter, canvas, e, road, 1.0);
             }
-            let bld = egui::Color32::from_rgb(224, 194, 170);
+            let bld = theme::map_building();
             for b in &p.buildings {
                 self.run_page
                     .map
                     .draw_polygon(&painter, canvas, b, bld, 1.0);
             }
-            let fence_c = egui::Color32::from_rgb(180, 118, 0);
+            let fence_c = theme::map_fence();
             for f in &p.fences {
                 self.run_page
                     .map
                     .draw_polygon(&painter, canvas, f, fence_c, 2.0);
             }
-            let route_c = egui::Color32::from_rgb(30, 111, 216);
+            let route_c = theme::map_route();
             self.run_page
                 .map
                 .draw_polyline(&painter, canvas, &p.route, route_c, 2.5);
-            let cp = egui::Color32::from_rgb(240, 180, 0);
+            let cp = theme::map_checkpoint();
             for &(la, lo) in &p.checkpoints {
                 self.run_page
                     .map
@@ -753,7 +749,7 @@ impl App {
                     canvas,
                     first.0,
                     first.1,
-                    egui::Color32::from_rgb(22, 160, 90),
+                    theme::map_start(),
                     4.5,
                 );
             }
@@ -763,7 +759,7 @@ impl App {
                     canvas,
                     last.0,
                     last.1,
-                    egui::Color32::from_rgb(220, 38, 38),
+                    theme::map_end(),
                     4.5,
                 );
             }
@@ -800,7 +796,7 @@ impl App {
                 egui::Align2::LEFT_TOP,
                 label,
                 egui::FontId::proportional(12.0),
-                egui::Color32::from_rgb(88, 104, 99),
+                theme::map_label(),
             );
         } else {
             painter.text(
@@ -808,7 +804,7 @@ impl App {
                 egui::Align2::CENTER_CENTER,
                 "（无预览）",
                 egui::FontId::proportional(14.0),
-                egui::Color32::from_rgb(150, 160, 156),
+                theme::map_muted(),
             );
         }
 
@@ -1009,10 +1005,10 @@ impl App {
         super::map::legend(
             ui,
             &[
-                ("道路", egui::Color32::from_rgb(200, 208, 204)),
-                ("建筑", egui::Color32::from_rgb(224, 194, 170)),
-                ("路线", egui::Color32::from_rgb(30, 111, 216)),
-                ("跑道轮廓", egui::Color32::from_rgb(240, 150, 40)),
+                ("道路", theme::map_road()),
+                ("建筑", theme::map_building()),
+                ("路线", theme::map_route()),
+                ("跑道轮廓", theme::map_outline()),
             ],
         );
 
@@ -1022,11 +1018,7 @@ impl App {
             egui::Sense::click_and_drag(),
         );
         let canvas = response.rect;
-        painter.rect_filled(
-            canvas,
-            egui::Rounding::ZERO,
-            egui::Color32::from_rgb(250, 252, 251),
-        );
+        painter.rect_filled(canvas, egui::Rounding::ZERO, theme::map_bg());
 
         if !self.run_page.map_fitted {
             let mut bounds: Vec<(f64, f64)> = Vec::new();
@@ -1047,23 +1039,23 @@ impl App {
         }
 
         if let Some(v) = &self.run_page.track_preview {
-            let road = egui::Color32::from_rgb(200, 208, 204);
+            let road = theme::map_road();
             for e in &v.edges {
                 self.run_page.map.draw_polyline(&painter, canvas, e, road, 1.0);
             }
-            let bld = egui::Color32::from_rgb(224, 194, 170);
+            let bld = theme::map_building();
             for b in &v.buildings {
                 self.run_page.map.draw_polygon(&painter, canvas, b, bld, 1.0);
             }
-            let fence_c = egui::Color32::from_rgb(180, 118, 0);
+            let fence_c = theme::map_fence();
             for f in &v.fences {
                 self.run_page.map.draw_polygon(&painter, canvas, f, fence_c, 2.0);
             }
-            let route_c = egui::Color32::from_rgb(30, 111, 216);
+            let route_c = theme::map_route();
             self.run_page
                 .map
                 .draw_polyline(&painter, canvas, &v.route, route_c, 2.5);
-            let cp = egui::Color32::from_rgb(240, 180, 0);
+            let cp = theme::map_checkpoint();
             for &(la, lo) in &v.checkpoints {
                 self.run_page.map.draw_point(&painter, canvas, la, lo, cp, 3.5);
             }
@@ -1072,7 +1064,7 @@ impl App {
             let mut ring: Vec<(f64, f64)> = self.run_page.track.edit.clone();
             if ring.len() >= 3 {
                 ring.push(ring[0]);
-                let outline_c = egui::Color32::from_rgb(240, 150, 40);
+                let outline_c = theme::map_outline();
                 self.run_page
                     .map
                     .draw_polyline(&painter, canvas, &ring, outline_c, 2.0);
@@ -1098,7 +1090,7 @@ impl App {
                 }
                 for (i, &(la, lo)) in self.run_page.track.edit.iter().enumerate() {
                     let color = if self.run_page.track.drag == Some(i) {
-                        egui::Color32::from_rgb(220, 38, 38)
+                        theme::map_end()
                     } else {
                         outline_c
                     };
@@ -1166,7 +1158,7 @@ impl App {
                     egui::Align2::LEFT_TOP,
                     "编辑中：拖动顶点（自动吸附跑道节点）",
                     egui::FontId::proportional(12.0),
-                    egui::Color32::from_rgb(200, 90, 20),
+                    theme::map_outline(),
                 );
             } else {
                 let label = format!(
@@ -1178,7 +1170,7 @@ impl App {
                     egui::Align2::LEFT_TOP,
                     label,
                     egui::FontId::proportional(12.0),
-                    egui::Color32::from_rgb(88, 104, 99),
+                    theme::map_label(),
                 );
             }
         } else {
@@ -1187,7 +1179,7 @@ impl App {
                 egui::Align2::CENTER_CENTER,
                 "（无跑道预览）",
                 egui::FontId::proportional(14.0),
-                egui::Color32::from_rgb(150, 160, 156),
+                theme::map_muted(),
             );
         }
 

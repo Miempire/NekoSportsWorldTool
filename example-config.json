@@ -31,5 +31,5 @@
     "route_mode": "legacy",
     "must_points_limit": null
   },
-  "note": "示例配置包（example-config.json）。使用方法见 README / `nekosportsworldtool help export-bundle` / `nekosportsworldtool help import-bundle`。导入会立即覆盖 identity.json + config.json，不会覆盖 session.json（除非显式加 --apply-session）。"
+  "note": "示例配置包（example-config.json）。使用方法见 README / `miempires-run-tool help export-bundle` / `miempires-run-tool help import-bundle`。导入会立即覆盖 identity.json + config.json，不会覆盖 session.json（除非显式加 --apply-session）。"
 }
