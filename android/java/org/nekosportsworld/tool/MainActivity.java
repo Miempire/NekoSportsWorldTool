@@ -77,6 +77,58 @@ public final class MainActivity extends NativeActivity {
                         } catch (Throwable ignoredSensors) {
                             // 传感器只用于设备档案，读取失败不影响机型信息。
                         }
+                        // 真实电池：BatteryManager + ACTION_BATTERY_CHANGED；容量走 PowerProfile 反射。
+                        try {
+                            android.content.Intent batteryIntent = registerReceiver(
+                                null,
+                                new android.content.IntentFilter(
+                                    android.content.Intent.ACTION_BATTERY_CHANGED));
+                            if (batteryIntent != null) {
+                                int level = batteryIntent.getIntExtra(
+                                    android.os.BatteryManager.EXTRA_LEVEL, -1);
+                                int scale = batteryIntent.getIntExtra(
+                                    android.os.BatteryManager.EXTRA_SCALE, -1);
+                                int pct = (level >= 0 && scale > 0)
+                                    ? (int) Math.round(level * 100.0 / scale) : -1;
+                                int voltage = batteryIntent.getIntExtra(
+                                    android.os.BatteryManager.EXTRA_VOLTAGE, -1);
+                                int status = batteryIntent.getIntExtra(
+                                    android.os.BatteryManager.EXTRA_STATUS, -1);
+                                int plugged = batteryIntent.getIntExtra(
+                                    android.os.BatteryManager.EXTRA_PLUGGED, -1);
+                                int health = batteryIntent.getIntExtra(
+                                    android.os.BatteryManager.EXTRA_HEALTH, -1);
+                                int tempTenths = batteryIntent.getIntExtra(
+                                    android.os.BatteryManager.EXTRA_TEMPERATURE, -1);
+                                int capacity = 0;
+                                try {
+                                    Class<?> powerProfile =
+                                        Class.forName("com.android.internal.os.PowerProfile");
+                                    Object profile = powerProfile
+                                        .getConstructor(android.content.Context.class)
+                                        .newInstance(this);
+                                    Object value = powerProfile
+                                        .getMethod("getBatteryCapacity", (Class<?>[]) null)
+                                        .invoke(profile);
+                                    capacity = (int) Math.round(((Double) value).doubleValue());
+                                } catch (Throwable ignoredCapacity) {
+                                    capacity = 0;
+                                }
+                                org.json.JSONObject battery = new org.json.JSONObject();
+                                battery.put("capacity_mah", capacity);
+                                battery.put("voltage_mv", voltage);
+                                battery.put("level", pct);
+                                battery.put("status", status);
+                                battery.put("plugged", plugged);
+                                battery.put("health", health);
+                                battery.put("temperature_c",
+                                    tempTenths >= 0 ? tempTenths / 10.0 : 0.0);
+                                battery.put("technology", "Li-ion");
+                                info.put("battery", battery);
+                            }
+                        } catch (Throwable ignoredBattery) {
+                            // 电池只用于设备档案，读取失败退回按机型生成。
+                        }
                         nativeDeviceInfo(initial, info.toString(), "");
                     } catch (Exception error) {
                         nativeDeviceInfo(initial, "", "读取本机信息失败，请在设备页重试或手动填写");

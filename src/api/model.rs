@@ -238,6 +238,33 @@ pub fn refresh_derived(identity: &mut HeaderIdentity) {
 }
 
 #[cfg(any(target_os = "android", test))]
+fn minus_one() -> i64 {
+    -1
+}
+
+/// Android 读机返回的真实电池字段；读不到的用 -1/0 表示，合并时只覆盖有效值。
+#[cfg(any(target_os = "android", test))]
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct RealBattery {
+    #[serde(default)]
+    pub capacity_mah: i64,
+    #[serde(default)]
+    pub voltage_mv: i64,
+    #[serde(default = "minus_one")]
+    pub level: i64,
+    #[serde(default = "minus_one")]
+    pub status: i64,
+    #[serde(default = "minus_one")]
+    pub plugged: i64,
+    #[serde(default = "minus_one")]
+    pub health: i64,
+    #[serde(default)]
+    pub temperature_c: f64,
+    #[serde(default)]
+    pub technology: String,
+}
+
+#[cfg(any(target_os = "android", test))]
 #[derive(Debug, serde::Deserialize)]
 pub struct DeviceInfo {
     pub manufacturer: String,
@@ -246,6 +273,9 @@ pub struct DeviceInfo {
     /// Android 端由 Java 从 SensorManager 读取的真实清单；桌面端为 None。
     #[serde(default)]
     pub sensors: Option<Vec<crate::sensors::SensorInfo>>,
+    /// Android 端读取的真实电池；桌面端为 None。
+    #[serde(default)]
+    pub battery: Option<RealBattery>,
 }
 
 #[cfg(any(target_os = "android", test))]
@@ -269,6 +299,35 @@ pub fn identity_with_device_info(
         "android",
     );
     updated.battery = Some(generated);
+    // Android 读机时 Java 会带上真实电池；有效字段覆盖生成值。
+    if let Some(real) = &info.battery {
+        let mut merged = updated.battery.clone().unwrap_or_default();
+        if real.capacity_mah > 0 {
+            merged.capacity_mah = real.capacity_mah as u32;
+        }
+        if real.voltage_mv > 1000 {
+            merged.voltage_mv = real.voltage_mv as u32;
+        }
+        if (0..=100).contains(&real.level) {
+            merged.level = real.level as u8;
+        }
+        if real.status >= 0 {
+            merged.status = real.status as i32;
+        }
+        if real.plugged >= 0 {
+            merged.plugged = real.plugged as i32;
+        }
+        if real.health > 0 {
+            merged.health = real.health as i32;
+        }
+        if real.temperature_c > 0.0 {
+            merged.temperature_c = real.temperature_c as f32;
+        }
+        if !real.technology.trim().is_empty() {
+            merged.technology = real.technology.trim().to_string();
+        }
+        updated.battery = Some(merged);
+    }
     let generated_sensors = crate::sensors::generate(
         &updated.device_name,
         &updated.device_id,
@@ -558,6 +617,7 @@ mod storage_tests {
                 model: model.into(),
                 os_version: os_version.into(),
                 sensors: None,
+                battery: None,
             };
             assert!(identity_with_device_info(&identity, &info).is_err());
         }
