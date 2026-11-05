@@ -612,8 +612,9 @@ mod tests {
         let state = ensure_state(&id);
         let run = GtRun::new(42, "U-42", 7);
         let plain = build_plain(&run, &state);
-        assert!(plain.contains("\\\"uid\\\":42"));
-        assert!(plain.contains("\\\"uuid\\\":\\\"U-42\\\""));
+        // attr 只参与 sign，不明文出现在 dev 里；这里校验 sign 与设备串。
+        let sign = sha256_hex(scene_payload(42, "U-42", 7).as_bytes());
+        assert!(plain.contains(&sign), "明文里应含 scene payload 的签名");
         assert!(plain.contains(&state.d));
     }
 

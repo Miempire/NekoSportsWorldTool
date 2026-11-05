@@ -125,7 +125,7 @@ pub fn generate(model: &str, manufacturer: &str, device_id: &str, platform: &str
     let jitter_mv = rng.gen_range(-15i32..=15);
     let voltage_mv = (voltage_for_level(level) + jitter_mv as f64).round().clamp(3300.0, 4400.0) as u32;
 
-    let mut temperature_c = 26.0 + rng.gen_range(0.0..7.0);
+    let mut temperature_c: f32 = 26.0 + rng.gen_range(0.0f32..7.0f32);
     if charging {
         temperature_c += 1.5;
     }

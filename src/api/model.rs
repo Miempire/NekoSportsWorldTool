@@ -468,11 +468,12 @@ mod storage_tests {
         legacy.as_object_mut().unwrap().remove("manufacturer");
         write_json("identity.json", &legacy).unwrap();
         let loaded = load_identity_for_platform("android");
-        assert_eq!(
-            serde_json::to_value(&loaded).unwrap(),
-            serde_json::to_value(&existing).unwrap(),
-            "opening an existing install must not overwrite a manual identity"
-        );
+        // 派生档案（电池/传感器/极验 dev）会跟随手动机型重算，其余身份字段必须原样保留。
+        assert_eq!(loaded.device_name, existing.device_name);
+        assert_eq!(loaded.idfa, existing.idfa);
+        assert_eq!(loaded.device_id, existing.device_id);
+        assert_eq!(loaded.mac_address, existing.mac_address);
+        assert_eq!(loaded.app_install_time, existing.app_install_time);
 
         let info: DeviceInfo = serde_json::from_str(
             r#"{"manufacturer":"Example","model":"Phone 16","os_version":"16"}"#,
@@ -556,6 +557,7 @@ mod storage_tests {
                 manufacturer: String::new(),
                 model: model.into(),
                 os_version: os_version.into(),
+                sensors: None,
             };
             assert!(identity_with_device_info(&identity, &info).is_err());
         }
