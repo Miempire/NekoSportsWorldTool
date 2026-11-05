@@ -141,6 +141,40 @@ impl App {
                 });
         }
 
+        if let Some(battery) = &self.device_buf.battery {
+            ui.add_space(4.0);
+            let charge = match battery.status {
+                2 => "充电中",
+                5 => "已充满",
+                _ => "放电中",
+            };
+            let plugged = match battery.plugged {
+                1 => "AC",
+                2 => "USB",
+                _ => "未插电",
+            };
+            let health = match battery.health {
+                2 => "良好",
+                3 => "过热",
+                4 => "损坏",
+                _ => "未知",
+            };
+            ui.colored_label(
+                theme::text_dim(),
+                format!(
+                    "电池：{} mAh / {:.2} V / {}% / {}（{}）/ 健康：{} / {:.1}℃ / {}",
+                    battery.capacity_mah,
+                    battery.voltage_mv as f32 / 1000.0,
+                    battery.level,
+                    charge,
+                    plugged,
+                    health,
+                    battery.temperature_c,
+                    battery.technology
+                ),
+            );
+        }
+
         ui.add_space(4.0);
         ui.colored_label(
             theme::text_dim(),

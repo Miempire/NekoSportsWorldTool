@@ -187,6 +187,11 @@ fn load_identity_for_platform(platform: &str) -> HeaderIdentity {
         id.mac_address = crate::crypto::header::random_mac();
         dirty = true;
     }
+    if id.battery.is_none() {
+        let generated = crate::battery::generate_for(&id);
+        id.battery = Some(generated);
+        dirty = true;
+    }
     if dirty {
         let _ = save_identity(&id);
     }
@@ -214,6 +219,14 @@ pub fn identity_with_device_info(
     updated.device_name = info.model.trim().into();
     updated.manufacturer = info.manufacturer.trim().into();
     updated.os_version = info.os_version.trim().into();
+    // 机型变了，电池档案跟着重算，避免"iPhone 容量配 Android 机型"。
+    let generated = crate::battery::generate(
+        &updated.device_name,
+        &updated.manufacturer,
+        &updated.device_id,
+        "android",
+    );
+    updated.battery = Some(generated);
     Ok(updated)
 }
 

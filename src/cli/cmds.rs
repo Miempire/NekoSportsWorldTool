@@ -18,6 +18,7 @@ fn allowed_flags(cmd: &str) -> Option<&'static [&'static str]> {
         "device-verify" => &["token", "rrid", "uuid", "error-code"],
         "facecheck" => &["status", "photo"],
         "run-pv" => &["unid", "uuid", "details"],
+        "battery" => &["regen"],
         "run" => &[
             "dist",
             "pace",
@@ -80,6 +81,7 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         "device-verify" => cmd_device_verify(&rest),
         "facecheck" => cmd_facecheck(&rest),
         "run-pv" => cmd_run_pv(&rest),
+        "battery" => cmd_battery(&rest),
         "run" => cmd_run(&rest),
         "template" => cmd_template(&rest),
         "ai" => cmd_ai(&rest),
@@ -339,6 +341,36 @@ fn cmd_run_pv(rest: &[&str]) -> i32 {
         }
         Err(e) => {
             eprintln!("run/pv 失败: {e}");
+            1
+        }
+    }
+}
+
+/// 显示/重算设备电池档案（按机型生成，持久化在 identity.json）。
+fn cmd_battery(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let mut identity = model::load_identity();
+    if get(&flags, "regen").is_some() || identity.battery.is_none() {
+        let generated = crate::battery::generate_for(&identity);
+        identity.battery = Some(generated);
+        if let Err(e) = model::save_identity(&identity) {
+            eprintln!("保存 identity.json 失败: {e}");
+            return 1;
+        }
+    }
+    match &identity.battery {
+        Some(battery) => match serde_json::to_string_pretty(battery) {
+            Ok(text) => {
+                println!("{text}");
+                0
+            }
+            Err(e) => {
+                eprintln!("序列化失败: {e}");
+                1
+            }
+        },
+        None => {
+            eprintln!("未能生成电池档案");
             1
         }
     }

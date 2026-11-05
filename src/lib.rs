@@ -1,6 +1,7 @@
 //! Shared desktop and Android application.
 
 mod api;
+pub mod battery;
 pub mod cli;
 mod crypto;
 pub mod location;

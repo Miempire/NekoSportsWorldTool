@@ -44,6 +44,9 @@ pub struct HeaderIdentity {
     /// 提交 body 的城市名
     #[serde(default = "default_city")]
     pub city: String,
+    /// 电池档案（按机型生成，首次缺失时自动补齐）
+    #[serde(default)]
+    pub battery: Option<crate::battery::BatteryProfile>,
 }
 
 pub fn random_mac() -> String {
@@ -109,6 +112,7 @@ impl Default for HeaderIdentity {
             app_install_time: 0,
             mac_address: String::new(),
             city: default_city(),
+            battery: None,
         }
     }
 }

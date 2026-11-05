@@ -70,6 +70,7 @@ AI 运动
   obs-sample [--dist m] [--dur 秒] [--rrid n] [--seed n] [--out 文件]
                                             本地生成 OBS 样本（不提交）
   update  [--check]                         检查更新；默认下载并自替换
+  battery [--regen]                         查看/重算设备电池档案（按机型生成）
 
 配置迁移
   export-bundle [--file path] [--include-session]
@@ -128,6 +129,11 @@ pub(crate) fn usage_cmd(cmd: &str) -> bool {
              \n  上报抽检记录明细：POST api/v70240/run/pv\n\
              \n  --details 形如 [{\"type\":1,\"distance\":123,\"verifyType\":1,\"checkStatus\":true,\"failureReason\":0}]\n\
              \x20  缺省为空数组"
+        }
+        "battery" => {
+            "battery [--regen]\n\
+             \n  查看设备电池档案（identity.json 里的 battery 字段）。\n\
+             \n  --regen  按当前机型重新生成（电量/电压/充电状态/健康度/温度）"
         }
         "run" => {
             "run [--dist km] [--pace 秒/km|分:秒] [--altitude 米|最小-最大]\n\
