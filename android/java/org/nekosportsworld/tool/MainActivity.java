@@ -14,7 +14,7 @@ import android.widget.FrameLayout;
 
 /** Android UI thread owns the real text editor; Rust owns application state. */
 public final class MainActivity extends NativeActivity {
-    static { System.loadLibrary("nekosportsworldtool"); }
+    static { System.loadLibrary("miempires_run_tool"); }
     private AlertDialog editorDialog;
     private AlertDialog deviceInfoDialog;
     private boolean taskActive;
@@ -37,7 +37,7 @@ public final class MainActivity extends NativeActivity {
                 : "允许后只填写设备页，点击“保存”后用于后续登录和业务请求。";
             AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("读取本机信息")
-                .setMessage("是否允许读取本机品牌、型号和 Android 系统版本？\n\n" + purpose
+                .setMessage("是否允许读取本机品牌、型号、Android 系统版本和传感器清单？\n\n" + purpose
                     + "品牌仅用于设备页展示。"
                     + "\n\n设备 UUID 继续沿用本应用首次生成并保存的值，不会更换。拒绝后仍可手动填写，也可在设备页再次读取。")
                 .setPositiveButton("允许读取", (ignored, which) -> {
@@ -50,6 +50,33 @@ public final class MainActivity extends NativeActivity {
                         info.put("manufacturer", android.os.Build.MANUFACTURER);
                         info.put("model", android.os.Build.MODEL);
                         info.put("os_version", android.os.Build.VERSION.RELEASE);
+                        // 传感器清单：用于设备档案里的 sen 字段（模拟器检测会看这里）。
+                        try {
+                            android.hardware.SensorManager sensorManager =
+                                (android.hardware.SensorManager) getSystemService(SENSOR_SERVICE);
+                            if (sensorManager != null) {
+                                org.json.JSONArray sensors = new org.json.JSONArray();
+                                for (android.hardware.Sensor sensor
+                                    : sensorManager.getSensorList(android.hardware.Sensor.TYPE_ALL)) {
+                                    org.json.JSONObject row = new org.json.JSONObject();
+                                    row.put("name", sensor.getName());
+                                    row.put("vendor", sensor.getVendor());
+                                    row.put("type_id", sensor.getType());
+                                    String typeName = sensor.getStringType();
+                                    row.put("type_name",
+                                        typeName != null ? typeName : ("sensor_" + sensor.getType()));
+                                    row.put("version", sensor.getVersion());
+                                    row.put("max_range", sensor.getMaximumRange());
+                                    row.put("resolution", sensor.getResolution());
+                                    row.put("power_ma", sensor.getPower());
+                                    row.put("min_delay_us", sensor.getMinDelay());
+                                    sensors.put(row);
+                                }
+                                info.put("sensors", sensors);
+                            }
+                        } catch (Throwable ignoredSensors) {
+                            // 传感器只用于设备档案，读取失败不影响机型信息。
+                        }
                         nativeDeviceInfo(initial, info.toString(), "");
                     } catch (Exception error) {
                         nativeDeviceInfo(initial, "", "读取本机信息失败，请在设备页重试或手动填写");
@@ -262,7 +289,7 @@ public final class MainActivity extends NativeActivity {
         runOnUiThread(() -> {
             android.content.ClipboardManager clipboard =
                 (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("NekoSportsWorldTool", text));
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Miempire's RUN TOOL", text));
         });
     }
 

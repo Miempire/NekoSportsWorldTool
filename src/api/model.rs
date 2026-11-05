@@ -209,6 +209,9 @@ pub struct DeviceInfo {
     pub manufacturer: String,
     pub model: String,
     pub os_version: String,
+    /// Android 端由 Java 从 SensorManager 读取的真实清单；桌面端为 None。
+    #[serde(default)]
+    pub sensors: Option<Vec<crate::sensors::SensorInfo>>,
 }
 
 #[cfg(any(target_os = "android", test))]
@@ -238,6 +241,14 @@ pub fn identity_with_device_info(
         "android",
     );
     updated.sensors = Some(generated_sensors);
+    // Android 读机时 Java 会带上真实传感器清单，优先使用真机数据。
+    if let Some(list) = &info.sensors {
+        if !list.is_empty() {
+            updated.sensors = Some(crate::sensors::SensorProfile {
+                sensors: list.clone(),
+            });
+        }
+    }
     Ok(updated)
 }
 
@@ -427,6 +438,15 @@ mod storage_tests {
         expected["device_name"] = "Phone 16".into();
         expected["manufacturer"] = "Example".into();
         expected["os_version"] = "16".into();
+        let expected_battery = crate::battery::generate(
+            "Phone 16",
+            "Example",
+            &existing.device_id,
+            "android",
+        );
+        let expected_sensors = crate::sensors::generate("Phone 16", &existing.device_id, "android");
+        expected["battery"] = serde_json::to_value(&expected_battery).unwrap();
+        expected["sensors"] = serde_json::to_value(&expected_sensors).unwrap();
         assert_eq!(
             serde_json::to_value(&imported).unwrap(),
             expected,
