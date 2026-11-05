@@ -20,7 +20,7 @@ fn allowed_flags(cmd: &str) -> Option<&'static [&'static str]> {
         "run-pv" => &["unid", "uuid", "details"],
         "battery" => &["regen"],
         "sensors" => &["regen"],
-        "geetoken" => &["uuid", "scene"],
+        "geetoken" => &["uuid", "scene", "online"],
         "run" => &[
             "dist",
             "pace",
@@ -426,8 +426,11 @@ fn cmd_geetoken(rest: &[&str]) -> i32 {
     let scene = get(&flags, "scene")
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(7);
+    let online = get(&flags, "online").is_some();
     let identity = model::load_identity();
-    let (token, code) = crate::geetoken::make_token(&identity, session.uid, &uuid, scene);
+    let mut log = logger();
+    let (token, code) =
+        crate::geetoken::make_token_with_mode(&identity, session.uid, &uuid, scene, online, &mut log);
     let d = identity
         .gt
         .as_ref()

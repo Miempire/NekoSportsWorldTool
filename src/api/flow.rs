@@ -350,9 +350,17 @@ pub fn run_full_flow(
     // 先生成记录 uuid，便于用同一 uuid 生成 geeToken（scene=7 为提交回执）。
     let run_uuid = uuid::Uuid::new_v4().to_string().to_uppercase();
     let (gee_token, error_code) = if std::env::var("MRT_GEETOKEN").ok().as_deref() == Some("1") {
-        let (token, code) = crate::geetoken::make_token(&client.identity, sess.uid, &run_uuid, 7);
+        let online = std::env::var("MRT_GEETOKEN_ONLINE").ok().as_deref() == Some("1");
+        let (token, code) = crate::geetoken::make_token_with_mode(
+            &client.identity,
+            sess.uid,
+            &run_uuid,
+            7,
+            online,
+            &mut *log,
+        );
         log(&format!(
-            "[geetoken] 本地 token {} 字符，errorCode={code}",
+            "[geetoken] token {} 字符，errorCode={code}",
             token.len()
         ));
         (token, code)

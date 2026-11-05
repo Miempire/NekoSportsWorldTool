@@ -456,16 +456,118 @@ fn hex_lower(bytes: &[u8]) -> String {
     out
 }
 
-/// 生成一条本地 token，返回 (token, errorCode)。
+/// 一条本地 token 及其明文派生信息。
+#[derive(Debug, Clone)]
+pub struct LocalToken {
+    pub token: String,
+    /// 明文 `data.gid["3.0"]`，client_report 的 `GeeID` 头必须是它。
+    pub gee_id: String,
+    pub plain: serde_json::Value,
+}
+
+/// 生成一条本地 token（GEE…，-300）。
 pub fn make_token(identity: &crate::crypto::header::HeaderIdentity, uid: i64, uuid: &str, scene: i64) -> (String, i64) {
+    let local = generate_local(identity, uid, uuid, scene);
+    (local.token, -300)
+}
+
+/// 生成本地 token 并返回 geeID / 明文，供 client_report 换服务端 token。
+pub fn generate_local(
+    identity: &crate::crypto::header::HeaderIdentity,
+    uid: i64,
+    uuid: &str,
+    scene: i64,
+) -> LocalToken {
     let state = ensure_state(identity);
     let run = GtRun::new(uid, uuid, scene);
-    let plain = build_plain(&run, &state);
+    let plain_text = build_plain(&run, &state);
+    let plain: serde_json::Value = serde_json::from_str(&plain_text).unwrap_or_default();
+    let gee_id = plain
+        .get("data")
+        .and_then(|data| data.get("gid"))
+        .and_then(|gid| gid.get("3.0"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
     let mut random4 = [0u8; 4];
     rand::thread_rng().fill(&mut random4);
-    let token = encrypt_token(plain.as_bytes(), random4);
-    let code = code_for_token(&token);
-    (token, code)
+    let token = encrypt_token(plain_text.as_bytes(), random4);
+    LocalToken {
+        token,
+        gee_id,
+        plain,
+    }
+}
+
+/// 用本地 token 换服务端 token（`G02…`，errorCode=200）。
+///
+/// 请求：`POST https://riskct.geetest.com/g2/api/v1/client_report`
+/// 头：`API-Version: 1`、`AppID`、`GeeID`、`Client-Type: 1`，body 为本地 token 原文。
+pub fn exchange_online(local: &LocalToken, log: &mut dyn FnMut(&str)) -> Result<String, String> {
+    if local.gee_id.is_empty() {
+        return Err("明文里没有 data.gid[\"3.0\"]，无法走 client_report".into());
+    }
+    log("[gee] 用本地 token 换取服务端 token…");
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(20))
+        .build();
+    let resp = agent
+        .post(CLIENT_REPORT_URL)
+        .set("API-Version", "1")
+        .set("AppID", GT_APP_ID)
+        .set("GeeID", &local.gee_id)
+        .set("Client-Type", "1")
+        .set("Content-Type", "text/plain; charset=utf-8")
+        .send_bytes(local.token.as_bytes())
+        .map_err(crate::api::client::ureq_err)?;
+    let text = resp.into_string().unwrap_or_default();
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("client_report 响应不是 JSON: {e} | {}", tail(&text)))?;
+    let code = value.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+    if code != 0 {
+        return Err(format!("client_report 业务失败 code={code} | {}", tail(&text)));
+    }
+    let token = value
+        .get("data")
+        .and_then(|data| data.get("gee_token"))
+        .and_then(|token| token.as_str())
+        .unwrap_or("");
+    if token.is_empty() {
+        return Err(format!("client_report 未返回 gee_token | {}", tail(&text)));
+    }
+    log(&format!("[gee] 服务端 token 已换取，{} 字符", token.len()));
+    Ok(token.to_string())
+}
+
+fn tail(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= 120 {
+        trimmed.to_string()
+    } else {
+        trimmed.chars().skip(trimmed.chars().count() - 120).collect()
+    }
+}
+
+/// 生成 token：默认本地；`online=true` 时再换服务端 token（失败则退回本地）。
+pub fn make_token_with_mode(
+    identity: &crate::crypto::header::HeaderIdentity,
+    uid: i64,
+    uuid: &str,
+    scene: i64,
+    online: bool,
+    log: &mut dyn FnMut(&str),
+) -> (String, i64) {
+    let local = generate_local(identity, uid, uuid, scene);
+    if !online {
+        return (local.token, -300);
+    }
+    match exchange_online(&local, log) {
+        Ok(token) => (token, 200),
+        Err(error) => {
+            log(&format!("⚠ [gee] 换取服务端 token 失败，退回本地 token: {error}"));
+            (local.token, -300)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -513,5 +615,16 @@ mod tests {
         assert!(plain.contains("\\\"uid\\\":42"));
         assert!(plain.contains("\\\"uuid\\\":\\\"U-42\\\""));
         assert!(plain.contains(&state.d));
+    }
+
+    /// 与参考实现一致的黄金向量：plain=`{"a":1}`、random4=11 22 33 44。
+    #[test]
+    fn encrypt_matches_golden_vector() {
+        let token = encrypt_token(br#"{"a":1}"#, [0x11, 0x22, 0x33, 0x44]);
+        assert_eq!(
+            token,
+            "R0VFAAUxMTIyMzM0NDAxNWFiZDdmAAAAECc8nwc1mlvLNbq5fbAGXQs=",
+            "AES-256-CBC 本地 token 与参考实现不一致"
+        );
     }
 }
