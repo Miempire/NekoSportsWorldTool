@@ -20,6 +20,7 @@ fn allowed_flags(cmd: &str) -> Option<&'static [&'static str]> {
         "run-pv" => &["unid", "uuid", "details"],
         "battery" => &["regen"],
         "sensors" => &["regen"],
+        "geetoken" => &["uuid", "scene"],
         "run" => &[
             "dist",
             "pace",
@@ -84,6 +85,7 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         "run-pv" => cmd_run_pv(&rest),
         "battery" => cmd_battery(&rest),
         "sensors" => cmd_sensors(&rest),
+        "geetoken" => cmd_geetoken(&rest),
         "run" => cmd_run(&rest),
         "template" => cmd_template(&rest),
         "ai" => cmd_ai(&rest),
@@ -406,6 +408,42 @@ fn cmd_sensors(rest: &[&str]) -> i32 {
             1
         }
     }
+}
+
+/// 生成一条极验本地 geeToken（GEE…，errorCode=-300）。
+fn cmd_geetoken(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let session = model::load_session();
+    if !session.is_logged_in() {
+        eprintln!("需要先登录：geetoken 需要 uid");
+        return 1;
+    }
+    let uuid = get(&flags, "uuid")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string().to_uppercase());
+    let scene = get(&flags, "scene")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(7);
+    let identity = model::load_identity();
+    let (token, code) = crate::geetoken::make_token(&identity, session.uid, &uuid, scene);
+    let d = identity
+        .gt
+        .as_ref()
+        .map(|state| state.d.clone())
+        .unwrap_or_default();
+    println!(
+        "{}",
+        serde_json::json!({
+            "uuid": uuid,
+            "scene": scene,
+            "errorCode": code,
+            "d": d,
+            "token": token,
+        })
+    );
+    0
 }
 
 fn cmd_run(rest: &[&str]) -> i32 {

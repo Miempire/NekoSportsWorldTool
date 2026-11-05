@@ -48,6 +48,7 @@ miempires-run-tool send-code --phone 138xxxxxxxx      # 发注销验证码（typ
 miempires-run-tool unregister --code 123456 --yes     # 注销账号（不可逆）
 miempires-run-tool device-verify --token <geeToken>   # 上报极验回执（默认不发）
 miempires-run-tool facecheck --photo face.jpg --status 0   # 抽检照片上传
+miempires-run-tool geetoken --scene 7                  # 生成极验本地 geeToken
 miempires-run-tool help                                 # 全部命令
 ```
 

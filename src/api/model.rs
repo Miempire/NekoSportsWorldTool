@@ -197,6 +197,11 @@ fn load_identity_for_platform(platform: &str) -> HeaderIdentity {
         id.sensors = Some(generated);
         dirty = true;
     }
+    if id.gt.is_none() {
+        let state = crate::geetoken::ensure_state(&id);
+        id.gt = Some(state);
+        dirty = true;
+    }
     if dirty {
         let _ = save_identity(&id);
     }
@@ -249,6 +254,22 @@ pub fn identity_with_device_info(
             });
         }
     }
+    // 极验档案跟随新机型重算，但设备串 d 必须保留（否则 fp 变化像换了设备）。
+    let device_string = updated
+        .gt
+        .as_ref()
+        .map(|state| state.d.clone())
+        .unwrap_or_else(|| {
+            crate::geetoken::fresh_device_string(
+                &updated.device_id,
+                updated.app_install_time.max(0),
+            )
+        });
+    let gt_dev = crate::geetoken::generate_dev_for(&updated);
+    updated.gt = Some(crate::geetoken::GtState {
+        dev: gt_dev,
+        d: device_string,
+    });
     Ok(updated)
 }
 
@@ -447,6 +468,18 @@ mod storage_tests {
         let expected_sensors = crate::sensors::generate("Phone 16", &existing.device_id, "android");
         expected["battery"] = serde_json::to_value(&expected_battery).unwrap();
         expected["sensors"] = serde_json::to_value(&expected_sensors).unwrap();
+        let mut gt_identity = existing.clone();
+        gt_identity.platform = "android".into();
+        gt_identity.device_name = "Phone 16".into();
+        gt_identity.manufacturer = "Example".into();
+        gt_identity.os_version = "16".into();
+        gt_identity.battery = Some(expected_battery.clone());
+        gt_identity.sensors = Some(expected_sensors.clone());
+        let expected_gt = crate::geetoken::GtState {
+            dev: crate::geetoken::generate_dev_for(&gt_identity),
+            d: existing.gt.as_ref().map(|state| state.d.clone()).unwrap_or_default(),
+        };
+        expected["gt"] = serde_json::to_value(&expected_gt).unwrap();
         assert_eq!(
             serde_json::to_value(&imported).unwrap(),
             expected,

@@ -3,6 +3,7 @@
 mod api;
 pub mod battery;
 pub mod cli;
+pub mod geetoken;
 pub mod sensors;
 mod crypto;
 pub mod location;

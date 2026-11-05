@@ -92,6 +92,12 @@ pub struct SubmitParams {
     pub face_check: i64,
     pub five_point_json: String,
     pub address: String,
+    /// 本次提交的记录 uuid（由调用方生成，便于提前生成 geeToken）。
+    pub uuid: String,
+    /// 极验 geeToken；空串表示不携带。
+    pub gee_token: String,
+    /// 与 geeToken 配套的 errorCode（-999/ -300 / 200）。
+    pub error_code: i64,
 }
 
 #[allow(dead_code)]
@@ -124,7 +130,11 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
     let power = avg_power(p.weight, total_dis, total_time);
     let kcal = official_kcal(p.weight, total_time, total_dis);
 
-    let run_uuid = uuid::Uuid::new_v4().to_string().to_uppercase();
+    let run_uuid = if p.uuid.is_empty() {
+        uuid::Uuid::new_v4().to_string().to_uppercase()
+    } else {
+        p.uuid.clone()
+    };
     let unid = p.selected_unid;
 
     let dis_ceil = (total_dis * 100.0).ceil() / 100.0;
@@ -176,8 +186,8 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
         body.insert("fivePointJson".into(), Value::String(p.five_point_json.clone()));
     }
     // Android 必现扩展字段
-    body.insert("errorCode".into(), Value::from(0));
-    body.insert("geeToken".into(), Value::String(String::new()));
+    body.insert("errorCode".into(), Value::from(p.error_code));
+    body.insert("geeToken".into(), Value::String(p.gee_token.clone()));
     body.insert("unauthorized".into(), Value::from(0));
     body.insert("themeId".into(), Value::from(0));
     body.insert("goalId".into(), Value::Null);

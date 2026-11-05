@@ -72,6 +72,7 @@ AI 运动
   update  [--check]                         检查更新；默认下载并自替换
   battery [--regen]                         查看/重算设备电池档案（按机型生成）
   sensors [--regen]                         查看/重算设备传感器清单（按机型生成）
+  geetoken [--uuid <s>] [--scene n]          生成极验本地 geeToken（默认 scene=7）
 
 配置迁移
   export-bundle [--file path] [--include-session]
@@ -140,6 +141,12 @@ pub(crate) fn usage_cmd(cmd: &str) -> bool {
             "sensors [--regen]\n\
              \n  查看设备传感器清单（identity.json 里的 sensors 字段）。\n\
              \n  --regen  按当前机型重新生成（加速度/陀螺仪/磁力计/光线/距离/步数等）"
+        }
+        "geetoken" => {
+            "geetoken [--uuid <s>] [--scene n]\n\
+             \n  生成极验本地 token（GEE…，errorCode=-300），需要已登录（取 uid）。\n\
+             \n  --uuid   记录 uuid，缺省随机\n\
+             \n  --scene  交互场景：4=起跑 6=打卡 7=提交（缺省 7）"
         }
         "run" => {
             "run [--dist km] [--pace 秒/km|分:秒] [--altitude 米|最小-最大]\n\

@@ -50,6 +50,9 @@ pub struct HeaderIdentity {
     /// 传感器清单（按机型生成，首次缺失时自动补齐）
     #[serde(default)]
     pub sensors: Option<crate::sensors::SensorProfile>,
+    /// 极验设备档案 + 设备串 d（首次缺失时自动补齐）
+    #[serde(default)]
+    pub gt: Option<crate::geetoken::GtState>,
 }
 
 pub fn random_mac() -> String {
@@ -117,6 +120,7 @@ impl Default for HeaderIdentity {
             city: default_city(),
             battery: None,
             sensors: None,
+            gt: None,
         }
     }
 }

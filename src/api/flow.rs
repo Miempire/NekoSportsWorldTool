@@ -347,6 +347,18 @@ pub fn run_full_flow(
 
     // ⑤ 提交（sportType=1）
     log("[record] 提交跑步记录（sportType=1）…");
+    // 先生成记录 uuid，便于用同一 uuid 生成 geeToken（scene=7 为提交回执）。
+    let run_uuid = uuid::Uuid::new_v4().to_string().to_uppercase();
+    let (gee_token, error_code) = if std::env::var("MRT_GEETOKEN").ok().as_deref() == Some("1") {
+        let (token, code) = crate::geetoken::make_token(&client.identity, sess.uid, &run_uuid, 7);
+        log(&format!(
+            "[geetoken] 本地 token {} 字符，errorCode={code}",
+            token.len()
+        ));
+        (token, code)
+    } else {
+        (String::new(), 0)
+    };
     let sp = SubmitParams {
         track,
         uid: sess.uid,
@@ -358,6 +370,9 @@ pub fn run_full_flow(
         face_check: params.face_check,
         five_point_json: five,
         address: client.identity.city.clone(),
+        uuid: run_uuid,
+        gee_token,
+        error_code,
     };
     let result = submit_record(client, &sp, log)?;
     sleep_secs(1);
