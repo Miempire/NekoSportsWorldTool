@@ -23,6 +23,9 @@ pub const DELETE_USER_PATH: &str = "/api/v61300/user/userLogout";
 pub const GEEVALIDATE_PATH: &str = "/api/v70270/security/geevalidate";
 
 /// 登录场景 captchaId（资源 gt4_captcha_login）。
+///
+/// ⚠ 实测：用它对 geevalidate(businessType=0) 会稳定 10003；登录链必须用
+/// `login::CAPTCHA_ID_BIZ0`（`8c065103…`），此常量仅作记录，勿用于登录。
 pub const LOGIN_CAPTCHA_ID: &str = "3b02ad39bd099fd3a8336d9347a189ab";
 /// 发短信场景 captchaId（资源 gt4_captcha_register）。
 pub const REGISTER_CAPTCHA_ID: &str = "d30b3493dd08ff6aedc850648e7e0466";
