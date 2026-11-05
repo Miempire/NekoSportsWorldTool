@@ -589,9 +589,9 @@ fn build_from_route(
         ((-1, 5), 3),
         ((-1, 6), 2),
     ];
-    let p_type3 = rng.uniform(0.06, 0.14);
-    let p_odd = rng.uniform(0.004, 0.010);
-    let p_drift = p_odd + rng.uniform(0.003, 0.008);
+    let p_type3 = rng.uniform(0.001, 0.004);
+    let p_odd = rng.uniform(0.001, 0.003);
+    let p_drift = p_odd + rng.uniform(0.0005, 0.002);
     let mut kinds: Vec<(i64, i64)> = Vec::with_capacity(n);
     for _ in 0..n {
         let u = rng.random();
