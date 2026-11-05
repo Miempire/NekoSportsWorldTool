@@ -56,6 +56,27 @@ pub fn run_full_flow(
 ) -> Result<RunOutcome, String> {
     let sess: Session = client.login.clone().ok_or("未登录")?;
 
+    // 极验会话回执：scene=4 在「起跑」时发（流程一开始），
+    // scene=6/7 在提交前按检查点比例补发（折中：不真实等待整场跑步）。
+    let geetoken_on = std::env::var("MRT_GEETOKEN").ok().as_deref() == Some("1");
+    let geetoken_online = std::env::var("MRT_GEETOKEN_ONLINE").ok().as_deref() == Some("1");
+    let run_uuid = uuid::Uuid::new_v4().to_string().to_uppercase();
+    let mut start_receipt: (String, i64) = (String::new(), 0);
+    if geetoken_on {
+        start_receipt = crate::geetoken::make_token_with_mode(
+            &client.identity,
+            sess.uid,
+            "",
+            4,
+            geetoken_online,
+            &mut *log,
+        );
+        log(&format!(
+            "[gee] scene=4 起跑回执 token {} 字符",
+            start_receipt.0.len()
+        ));
+    }
+
     // ① policy
     log("[policy] 拉取跑步策略…");
     let pol = fetch_policy(client)?;
@@ -347,29 +368,24 @@ pub fn run_full_flow(
 
     // ⑤ 提交（sportType=1）
     log("[record] 提交跑步记录（sportType=1）…");
-    // 先生成记录 uuid，供 scene=4/6/7 回执与提交共用。
-    let run_uuid = uuid::Uuid::new_v4().to_string().to_uppercase();
-    let (gee_token, error_code) = if std::env::var("MRT_GEETOKEN").ok().as_deref() == Some("1") {
-        let online = std::env::var("MRT_GEETOKEN_ONLINE").ok().as_deref() == Some("1");
-        // scene=4：起跑回执，attr 只有 uid（不传 uuid）。
-        let mut receipt = crate::geetoken::make_token_with_mode(
-            &client.identity,
-            sess.uid,
-            "",
-            4,
-            online,
-            &mut *log,
-        );
-        log(&format!("[gee] scene=4 起跑回执 token {} 字符", receipt.0.len()));
-        // scene=6：每过一个打卡点发一条。
-        for index in 0..pts.len() {
-            sleep_secs(1);
+    // scene=6 按检查点顺序在压缩窗口内按比例发；scene=7 最后发，用于提交体。
+    let (gee_token, error_code) = if geetoken_on {
+        let mut receipt = start_receipt;
+        let window = (pts.len() as f64 * 2.0).clamp(2.0, 12.0);
+        let mut waited = 0.0f64;
+        for (index, _) in pts.iter().enumerate() {
+            let target = window * (index + 1) as f64 / pts.len() as f64;
+            let wait = (target - waited).max(0.0);
+            if wait > 0.02 {
+                std::thread::sleep(std::time::Duration::from_millis((wait * 1000.0) as u64));
+            }
+            waited = target;
             receipt = crate::geetoken::make_token_with_mode(
                 &client.identity,
                 sess.uid,
                 &run_uuid,
                 6,
-                online,
+                geetoken_online,
                 &mut *log,
             );
             log(&format!(
@@ -379,14 +395,12 @@ pub fn run_full_flow(
                 receipt.0.len()
             ));
         }
-        sleep_secs(1);
-        // scene=7：跑步结束回执，提交体用的就是这一条。
         receipt = crate::geetoken::make_token_with_mode(
             &client.identity,
             sess.uid,
             &run_uuid,
             7,
-            online,
+            geetoken_online,
             &mut *log,
         );
         log(&format!(

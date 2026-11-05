@@ -288,10 +288,11 @@ pub fn build(
 
     // 漂移/暂停概率已下调，减少地图上灰色段与暂停区
     // （ptype=-1 为暂停/漂移点，灰色段主要来自它与丢点大间隔）
+    // type=3 会让 App 按"弱信号"画灰线，比例从 30%~45% 降到 6%~14%。
     let tl_w = [((-1i64, 4i64), 54u32), ((-1, 1), 27), ((-1, 12), 13), ((-1, 5), 3), ((-1, 6), 2)];
-    let p_type3 = rng.uniform(0.30, 0.45);
-    let p_odd = rng.uniform(0.006, 0.015);
-    let p_drift = p_odd + rng.uniform(0.004, 0.012);
+    let p_type3 = rng.uniform(0.06, 0.14);
+    let p_odd = rng.uniform(0.004, 0.010);
+    let p_drift = p_odd + rng.uniform(0.003, 0.008);
     let mut kinds: Vec<(i64, i64)> = Vec::with_capacity(n);
     for _ in 0..n {
         let u = rng.random();
