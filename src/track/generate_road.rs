@@ -837,6 +837,17 @@ fn build_from_route(
             (avg, gps)
         };
 
+        // 每点步数取累计差分，步幅由该段距离/步数反推，保证与 GPS 距离自洽。
+        let steps_now = cum_steps[i].round() as i64;
+        let steps_prev = if i == 0 { 0 } else { cum_steps[i - 1].round() as i64 };
+        let interval_steps = (steps_now - steps_prev).max(0);
+        let interval_dist = if i == 0 { cum_dist[i] } else { (cum_dist[i] - cum_dist[i - 1]).max(0.0) };
+        let step_distance = if interval_steps > 0 {
+            (interval_dist / interval_steps as f64).clamp(0.5, 1.8)
+        } else {
+            0.0
+        };
+
         locs.push(GenPoint {
             id: i as i64 + 1,
             flag: start_ms,
@@ -858,8 +869,8 @@ fn build_from_route(
             totalDis: round_to(cum_dist[i], 4),
             validDis: round_to(cum_dist[i], 4),
             validTime: round_to(times[i], 0) as i64,
-            steps: cum_steps[i].round() as i64,
-            stepDistance: 0.0,
+            steps: steps_now,
+            stepDistance: round_to(step_distance, 2),
             gainTime: fmt_gain_time(start_ms + (times[i] * 1000.0) as i64),
             gainTimeMs: start_ms + (times[i] * 1000.0) as i64,
             queueNum: 0,
@@ -868,7 +879,7 @@ fn build_from_route(
             bdD: round_to(brg, 2),
             bdS: round_to((avg_sp * rng.uniform(0.6, 0.95)).max(0.0), 3),
             bdG: rng.choice(&[1, 1, 1, -1]),
-            count: rng.randint(20, 88),
+            count: interval_steps,
             dtr: 0.0,
             state,
             locationId: String::new(),

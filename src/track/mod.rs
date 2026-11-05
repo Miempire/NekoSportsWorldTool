@@ -102,6 +102,35 @@ mod tests {
         assert!(track.totalSteps > 500, "steps={}", track.totalSteps);
     }
 
+    /// 步数与 GPS 距离必须自洽：每点 count 是增量、总和等于 totalSteps，
+    /// 步幅落在真人范围，步频序列不能是常数。
+    #[test]
+    fn test_step_fields_cross_validate_with_distance() {
+        let pts = sample_points();
+        let start = 1_788_958_186_123i64;
+        for (dist, dur) in [(1500.0, 700), (3300.0, 1220)] {
+            let track = build(dist, dur, 42, (38.9, 121.54), start, &pts, None).expect("build");
+            let sum: i64 = track.locations.iter().map(|p| p.count).sum();
+            assert_eq!(sum, track.totalSteps, "sum(count) 必须等于 totalSteps");
+            assert!(track.locations.iter().any(|p| p.count > 0), "count 不能全为 0");
+            for p in &track.locations {
+                if p.count > 0 {
+                    assert!(
+                        (0.5..=1.8).contains(&p.stepDistance),
+                        "步幅异常 {} (count={})",
+                        p.stepDistance,
+                        p.count
+                    );
+                }
+            }
+            let vals: Vec<f64> = track.stepsPerTenSec.iter().map(|w| w.value).collect();
+            assert!(
+                vals.windows(2).any(|w| (w[0] - w[1]).abs() > 1e-6),
+                "stepsPerTenSec 不应恒定"
+            );
+        }
+    }
+
     /// 轨迹生成抽样断言：距离精确、采样间隔分布、哨兵/位移语义。
     #[test]
     fn test_generator_distribution() {

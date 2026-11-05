@@ -104,6 +104,16 @@ where
             let rad = round_to(rng.uniform(1.4, 2.4), 2);
             let total_dis = round_to(s_d, 4);
             let total_time = round_to(tt, 0) as i64;
+            // 补点的步数同样取"与上一点的增量"，保证 sum(count) 与 GPS 距离自洽。
+            let prev_steps = out.last().map(|p| p.steps).unwrap_or(a.steps);
+            let prev_dis = out.last().map(|p| p.totalDis).unwrap_or(a.totalDis);
+            let interval_steps = (steps - prev_steps).max(0);
+            let interval_dist = (total_dis - prev_dis).max(0.0);
+            let step_distance = if interval_steps > 0 {
+                (interval_dist / interval_steps as f64).clamp(0.5, 1.8)
+            } else {
+                0.0
+            };
             out.push(GenPoint {
                 id: 0,
                 flag: a.flag,
@@ -126,7 +136,7 @@ where
                 validDis: total_dis,
                 validTime: total_time,
                 steps,
-                stepDistance: 0.0,
+                stepDistance: round_to(step_distance, 2),
                 gainTime: fmt_gain_time(a.flag + total_time * 1000),
                 gainTimeMs: a.flag + total_time * 1000,
                 queueNum: 0,
@@ -135,7 +145,7 @@ where
                 bdD: round_to(brg, 2),
                 bdS: round_to(a.bdS + (b.bdS - a.bdS) * u, 3),
                 bdG: rng.choice(&[1, 1, 1, -1]),
-                count: rng.randint(20, 88),
+                count: interval_steps,
                 dtr: 0.0,
                 // 与 type=0 正常点同分布（补点本身 type=0）
                 state: rng.weighted(&[(1, 145), (2, 45), (3, 164)]),
@@ -198,5 +208,23 @@ pub fn apply_post_fixes(locs: &mut [GenPoint], rng: &mut Rng, _start_ms: i64) {
         if locs[0].speed == 0.0 {
             locs[0].speed = round_to(rng.uniform(7.0, 13.0), 4);
         }
+    }
+
+    // 最终一致性：count/stepDistance 全部由 steps/totalDis 的差分重建。
+    // 这样哨兵置零、区间改 type 等后处理都不会破坏"步数 ↔ GPS 距离"的交叉校验。
+    for i in 0..locs.len() {
+        let (prev_steps, prev_dis) = if i == 0 {
+            (0i64, 0.0f64)
+        } else {
+            (locs[i - 1].steps, locs[i - 1].totalDis)
+        };
+        let ds = (locs[i].steps - prev_steps).max(0);
+        let dd = (locs[i].totalDis - prev_dis).max(0.0);
+        locs[i].count = ds;
+        locs[i].stepDistance = if ds > 0 {
+            round_to((dd / ds as f64).clamp(0.5, 1.8), 2)
+        } else {
+            0.0
+        };
     }
 }
