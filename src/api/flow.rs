@@ -347,11 +347,41 @@ pub fn run_full_flow(
 
     // ⑤ 提交（sportType=1）
     log("[record] 提交跑步记录（sportType=1）…");
-    // 先生成记录 uuid，便于用同一 uuid 生成 geeToken（scene=7 为提交回执）。
+    // 先生成记录 uuid，供 scene=4/6/7 回执与提交共用。
     let run_uuid = uuid::Uuid::new_v4().to_string().to_uppercase();
     let (gee_token, error_code) = if std::env::var("MRT_GEETOKEN").ok().as_deref() == Some("1") {
         let online = std::env::var("MRT_GEETOKEN_ONLINE").ok().as_deref() == Some("1");
-        let (token, code) = crate::geetoken::make_token_with_mode(
+        // scene=4：起跑回执，attr 只有 uid（不传 uuid）。
+        let mut receipt = crate::geetoken::make_token_with_mode(
+            &client.identity,
+            sess.uid,
+            "",
+            4,
+            online,
+            &mut *log,
+        );
+        log(&format!("[gee] scene=4 起跑回执 token {} 字符", receipt.0.len()));
+        // scene=6：每过一个打卡点发一条。
+        for index in 0..pts.len() {
+            sleep_secs(1);
+            receipt = crate::geetoken::make_token_with_mode(
+                &client.identity,
+                sess.uid,
+                &run_uuid,
+                6,
+                online,
+                &mut *log,
+            );
+            log(&format!(
+                "[gee] scene=6 打卡回执 {}/{} token {} 字符",
+                index + 1,
+                pts.len(),
+                receipt.0.len()
+            ));
+        }
+        sleep_secs(1);
+        // scene=7：跑步结束回执，提交体用的就是这一条。
+        receipt = crate::geetoken::make_token_with_mode(
             &client.identity,
             sess.uid,
             &run_uuid,
@@ -360,10 +390,11 @@ pub fn run_full_flow(
             &mut *log,
         );
         log(&format!(
-            "[geetoken] token {} 字符，errorCode={code}",
-            token.len()
+            "[gee] scene=7 提交回执 token {} 字符，errorCode={}",
+            receipt.0.len(),
+            receipt.1
         ));
-        (token, code)
+        receipt
     } else {
         (String::new(), 0)
     };
