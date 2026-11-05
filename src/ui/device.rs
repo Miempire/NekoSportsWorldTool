@@ -175,6 +175,20 @@ impl App {
             );
         }
 
+        if let Some(profile) = &self.device_buf.sensors {
+            let sample = profile
+                .sensors
+                .iter()
+                .take(4)
+                .map(|s| s.type_name.rsplit('.').next().unwrap_or(&s.type_name))
+                .collect::<Vec<_>>()
+                .join(" / ");
+            ui.colored_label(
+                theme::text_dim(),
+                format!("传感器：{} 个（{}…）", profile.sensors.len(), sample),
+            );
+        }
+
         ui.add_space(4.0);
         ui.colored_label(
             theme::text_dim(),

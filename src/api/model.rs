@@ -192,6 +192,11 @@ fn load_identity_for_platform(platform: &str) -> HeaderIdentity {
         id.battery = Some(generated);
         dirty = true;
     }
+    if id.sensors.is_none() {
+        let generated = crate::sensors::generate_for(&id);
+        id.sensors = Some(generated);
+        dirty = true;
+    }
     if dirty {
         let _ = save_identity(&id);
     }
@@ -227,6 +232,12 @@ pub fn identity_with_device_info(
         "android",
     );
     updated.battery = Some(generated);
+    let generated_sensors = crate::sensors::generate(
+        &updated.device_name,
+        &updated.device_id,
+        "android",
+    );
+    updated.sensors = Some(generated_sensors);
     Ok(updated)
 }
 

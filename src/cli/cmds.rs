@@ -19,6 +19,7 @@ fn allowed_flags(cmd: &str) -> Option<&'static [&'static str]> {
         "facecheck" => &["status", "photo"],
         "run-pv" => &["unid", "uuid", "details"],
         "battery" => &["regen"],
+        "sensors" => &["regen"],
         "run" => &[
             "dist",
             "pace",
@@ -82,6 +83,7 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         "facecheck" => cmd_facecheck(&rest),
         "run-pv" => cmd_run_pv(&rest),
         "battery" => cmd_battery(&rest),
+        "sensors" => cmd_sensors(&rest),
         "run" => cmd_run(&rest),
         "template" => cmd_template(&rest),
         "ai" => cmd_ai(&rest),
@@ -371,6 +373,36 @@ fn cmd_battery(rest: &[&str]) -> i32 {
         },
         None => {
             eprintln!("未能生成电池档案");
+            1
+        }
+    }
+}
+
+/// 显示/重算设备传感器清单（按机型生成，持久化在 identity.json）。
+fn cmd_sensors(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let mut identity = model::load_identity();
+    if get(&flags, "regen").is_some() || identity.sensors.is_none() {
+        let generated = crate::sensors::generate_for(&identity);
+        identity.sensors = Some(generated);
+        if let Err(e) = model::save_identity(&identity) {
+            eprintln!("保存 identity.json 失败: {e}");
+            return 1;
+        }
+    }
+    match &identity.sensors {
+        Some(profile) => match serde_json::to_string_pretty(profile) {
+            Ok(text) => {
+                println!("{text}");
+                0
+            }
+            Err(e) => {
+                eprintln!("序列化失败: {e}");
+                1
+            }
+        },
+        None => {
+            eprintln!("未能生成传感器清单");
             1
         }
     }

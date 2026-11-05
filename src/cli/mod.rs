@@ -71,6 +71,7 @@ AI 运动
                                             本地生成 OBS 样本（不提交）
   update  [--check]                         检查更新；默认下载并自替换
   battery [--regen]                         查看/重算设备电池档案（按机型生成）
+  sensors [--regen]                         查看/重算设备传感器清单（按机型生成）
 
 配置迁移
   export-bundle [--file path] [--include-session]
@@ -134,6 +135,11 @@ pub(crate) fn usage_cmd(cmd: &str) -> bool {
             "battery [--regen]\n\
              \n  查看设备电池档案（identity.json 里的 battery 字段）。\n\
              \n  --regen  按当前机型重新生成（电量/电压/充电状态/健康度/温度）"
+        }
+        "sensors" => {
+            "sensors [--regen]\n\
+             \n  查看设备传感器清单（identity.json 里的 sensors 字段）。\n\
+             \n  --regen  按当前机型重新生成（加速度/陀螺仪/磁力计/光线/距离/步数等）"
         }
         "run" => {
             "run [--dist km] [--pace 秒/km|分:秒] [--altitude 米|最小-最大]\n\
