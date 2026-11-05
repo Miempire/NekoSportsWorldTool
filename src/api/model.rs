@@ -187,25 +187,54 @@ fn load_identity_for_platform(platform: &str) -> HeaderIdentity {
         id.mac_address = crate::crypto::header::random_mac();
         dirty = true;
     }
-    if id.battery.is_none() {
-        let generated = crate::battery::generate_for(&id);
-        id.battery = Some(generated);
-        dirty = true;
-    }
-    if id.sensors.is_none() {
-        let generated = crate::sensors::generate_for(&id);
-        id.sensors = Some(generated);
-        dirty = true;
-    }
-    if id.gt.is_none() {
-        let state = crate::geetoken::ensure_state(&id);
-        id.gt = Some(state);
+    let before = (id.battery.clone(), id.sensors.clone(), id.gt.clone());
+    refresh_derived(&mut id);
+    if before.0 != id.battery || before.1 != id.sensors || before.2 != id.gt {
         dirty = true;
     }
     if dirty {
         let _ = save_identity(&id);
     }
     id
+}
+
+/// 重算依赖机型的派生档案（电池 / 传感器 / 极验 dev）；设备串 `d` 保留不变。
+///
+/// 判定"机型变了"用 `gt.dev` 里记录的 model/osv；只缺字段时也会补齐。
+pub fn refresh_derived(identity: &mut HeaderIdentity) {
+    let model_changed = identity
+        .gt
+        .as_ref()
+        .map(|state| {
+            state.dev.model != identity.device_name || state.dev.osv != identity.os_version
+        })
+        .unwrap_or(true);
+
+    if identity.battery.is_none() || model_changed {
+        let generated = crate::battery::generate_for(identity);
+        identity.battery = Some(generated);
+    }
+    if identity.sensors.is_none() || model_changed {
+        let generated = crate::sensors::generate_for(identity);
+        identity.sensors = Some(generated);
+    }
+    let device_string = identity
+        .gt
+        .as_ref()
+        .map(|state| state.d.clone())
+        .unwrap_or_else(|| {
+            crate::geetoken::fresh_device_string(
+                &identity.device_id,
+                identity.app_install_time.max(0),
+            )
+        });
+    if identity.gt.is_none() || model_changed {
+        let dev = crate::geetoken::generate_dev_for(identity);
+        identity.gt = Some(crate::geetoken::GtState {
+            dev,
+            d: device_string,
+        });
+    }
 }
 
 #[cfg(any(target_os = "android", test))]

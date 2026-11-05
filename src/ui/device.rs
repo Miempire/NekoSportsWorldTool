@@ -208,6 +208,8 @@ impl App {
         ui.add_space(8.0);
         mobile::row(ui, |ui| {
             if ui.add(theme::primary_btn("保存")).clicked() {
+                // 机型/系统版本改过时，电池、传感器、极验档案跟着重算（设备串 d 保留）。
+                crate::api::model::refresh_derived(&mut self.device_buf);
                 match crate::api::model::save_identity(&self.device_buf) {
                     Ok(()) => {
                         self.identity = self.device_buf.clone();
