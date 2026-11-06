@@ -3,7 +3,7 @@ Cargo.lock.bak
 nekosportsworldtool.log*
 *.log.old
 
-# 运行时数据（含会话/凭据，禁止入库）
+# 杩愯鏃舵暟鎹紙鍚細璇?鍑嵁锛岀姝㈠叆搴擄級
 /session.json
 /config.json
 /identity.json
@@ -29,12 +29,14 @@ docs/_preview.png
 /.android-test/
 /.worktrees/
 
-# 打包输出（含 exe 与运行数据，禁止入库）
-/dist
-# 本地工具目录
+# 鎵撳寘杈撳嚭锛堝惈 exe 涓庤繍琛屾暟鎹紝绂佹鍏ュ簱锛?/dist
+# 鏈湴宸ュ叿鐩綍
 /.mimosa/
 /.zcode/
 
-# 自动更新替换残留
+# 鑷姩鏇存柊鏇挎崲娈嬬暀
 *.exe.old
 *.exe.new
+apis.doc
+apis.files/
+apis.md
