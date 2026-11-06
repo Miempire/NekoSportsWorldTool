@@ -139,11 +139,11 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
 
     let dis_ceil = (total_dis * 100.0).ceil() / 100.0;
     // Android 端 speed = 速度(km/h) × 1024；
-    // iOS 端速度单位不同，按「每公里秒数 × 1024」提交（451s/km → 461824），
-    // 否则官方 iOS 客户端会把 km/h 的值当成秒，显示成 0'07'' 这类异常配速。
+    // iOS 端 speed 表示「每公里秒数」：配速(分/公里) × 60 = 秒/公里，
+    // 不能再乘 1024（那是 km/h 的定点缩放，iOS 不认）。
     let speed = if client.identity.platform == "ios" {
-        let pace_sec = total_time as f64 / (total_dis / 1000.0).max(0.001);
-        (round_to(pace_sec, 0) * 1024.0) as i64
+        let pace_min = total_time as f64 / 60.0 / (total_dis / 1000.0).max(0.001);
+        round_to(pace_min * 60.0, 0) as i64
     } else {
         (round_to(total_time as f64 / dis_ceil * 50.0 / 3.0, 2) * 1024.0) as i64
     };
