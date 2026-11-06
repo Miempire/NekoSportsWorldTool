@@ -36,10 +36,15 @@ fn free_console() {}
 #[cfg(feature = "gui")]
 fn run_gui() {
     free_console();
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_inner_size([880.0, 720.0])
+        .with_title("Miempire's RUN TOOL");
+    // 窗口/任务栏图标（PNG 内嵌，桌面端通用）。
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")) {
+        viewport = viewport.with_icon(icon);
+    }
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([880.0, 720.0])
-            .with_title("Miempire's RUN TOOL"),
+        viewport,
         ..Default::default()
     };
     let result = miempires_run_tool::run_gui(options);
