@@ -101,7 +101,7 @@ pub(crate) fn usage_cmd(cmd: &str) -> bool {
         "portal-login" => {
             "portal-login --user <静水空间用户名> --pass <密码>\n\
              \n  复用网站登录（RSA-OAEP-SHA256 加密密码），捕获会话 Cookie 后\n\
-             \n  访问 /p/pass 校验 79882369153325-SSUF 与授权日期，并加密保存到本机。\n\
+             \n  访问 /p/pass 校验授权标记与授权日期，并加密保存到本机。\n\
              \n  --user  静水空间用户名\n\
              \n  --pass  密码\n\
              \n  未给参数时读取环境变量 MRT_PORTAL_USER / MRT_PORTAL_PASS。"

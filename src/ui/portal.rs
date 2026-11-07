@@ -124,7 +124,7 @@ impl App {
                 ui.add_space(14.0);
                 ui.label(
                     eframe::egui::RichText::new(
-                        "登录会话会加密保存在本机；授权页需包含 79882369153325-SSUF",
+                        "登录会话会加密保存在本机；验证通过后才能使用本工具",
                     )
                     .small()
                     .color(theme::text_dim()),
