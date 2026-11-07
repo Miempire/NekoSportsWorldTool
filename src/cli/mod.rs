@@ -22,6 +22,12 @@ fn usage() {
       miempires-run-tool help [命令]   查看命令详情
       miempires-run-tool --version     显示版本
 
+平台授权
+  portal-login  --user <静水空间用户名> --pass <密码>
+           登录 jsspace.xyz:8443 并保存加密会话；之后每次功能调用都会校验 /p/pass
+  portal-logout
+           清除本机保存的平台授权会话
+
 账号
   login    --user <手机号> --pass <密码> [--remember]
            登录并保存会话；--remember 同时保存凭据，供会话失效时自动重登
@@ -92,6 +98,17 @@ AI 运动
 /// 单条命令的详细用法；未知命令返回 false。
 pub(crate) fn usage_cmd(cmd: &str) -> bool {
     let text = match cmd {
+        "portal-login" => {
+            "portal-login --user <静水空间用户名> --pass <密码>\n\
+             \n  复用网站登录（RSA-OAEP-SHA256 加密密码），捕获会话 Cookie 后\n\
+             \n  访问 /p/pass 校验 79882369153325-SSUF 与授权日期，并加密保存到本机。\n\
+             \n  --user  静水空间用户名\n\
+             \n  --pass  密码\n\
+             \n  未给参数时读取环境变量 MRT_PORTAL_USER / MRT_PORTAL_PASS。"
+        }
+        "portal-logout" => {
+            "portal-logout\n\n  清除本机保存的平台授权会话，之后所有功能将不可用，直到重新登录。"
+        }
         "login" => {
             "login --user <手机号> --pass <密码> [--remember]\n\
              \n  --user      账号（手机号）\n\

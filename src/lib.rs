@@ -8,6 +8,7 @@ pub mod sensors;
 mod crypto;
 pub mod location;
 pub mod platform;
+pub mod portal;
 pub mod template;
 mod relaunch;
 mod textlog;

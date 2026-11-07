@@ -18,6 +18,7 @@ pub mod map;
 pub mod mobile;
 pub mod msgs;
 pub mod osm;
+pub mod portal;
 pub mod records;
 pub mod run;
 pub mod theme;
@@ -47,6 +48,8 @@ pub const UPDATE_DONE: &str = "__UPDATE_DONE__";
 pub const FENCE_DONE: &str = "__FENCE_DONE__";
 pub const POINTS_DONE: &str = "__POINTS_DONE__";
 pub const POLICY_DONE: &str = "__POLICY_DONE__";
+pub const PORTAL_LOGIN: &str = "__PORTAL_LOGIN__";
+pub const PORTAL_FAIL: &str = "__PORTAL_FAIL__";
 
 /// 提交结果弹窗。
 pub struct PopupInfo {
@@ -88,6 +91,7 @@ pub struct App {
     pub user_page: user::UserPage,
     pub device_page: device::DevicePage,
     pub update: about::UpdateUi,
+    pub portal: portal::PortalUi,
 
     /// 已加载的 OSM 路网（真实道路路由 + 地图显示共用）。
     pub network: Option<Arc<route_planner::RoadGraph>>,
@@ -110,8 +114,29 @@ impl eframe::App for App {
         self.poll_messages();
         #[cfg(target_os = "android")]
         self.poll_device_info();
-        crate::platform::set_keep_screen_on(self.run_busy || self.ai_busy || self.login_busy);
+        crate::platform::set_keep_screen_on(
+            self.run_busy
+                || self.ai_busy
+                || self.login_busy
+                || self.portal.busy
+                || self.portal.checking,
+        );
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
+
+        if self.portal.authorized && !crate::portal::date_allowed(&self.portal.allowed_date) {
+            self.portal.authorized = false;
+            self.portal.error = format!(
+                "授权日期 {} 晚于当前日期 {}，无法使用功能",
+                self.portal.allowed_date,
+                crate::portal::today()
+            );
+            self.log.push(&format!("× {}", self.portal.error));
+        }
+        if !self.portal.authorized {
+            self.draw_portal_gate(ctx);
+            crate::platform::sync_clipboard(ctx);
+            return;
+        }
 
         // ── 顶栏 ────────────────────────────────────────────────
         egui::TopBottomPanel::top("top_bar")
@@ -140,6 +165,10 @@ impl eframe::App for App {
                         ui.colored_label(theme::err(), "● 未登录");
                     }
                 }
+                ui.colored_label(
+                    theme::ok(),
+                    format!("平台：{}（{}）", self.portal.username, self.portal.allowed_date),
+                );
             };
             if compact {
                 ui.horizontal_wrapped(draw_connection);
@@ -332,6 +361,8 @@ impl App {
         let username = config.username.clone();
         let password = config.password.clone();
         let remember = config.remember;
+        let saved_portal = crate::portal::load_saved(&identity.device_id);
+        let portal = portal::PortalUi::from_saved(saved_portal);
 
         let mut app = Self {
             tx: tx.clone(),
@@ -395,6 +426,7 @@ impl App {
             user_page: user::UserPage::default(),
             device_page: device::DevicePage::default(),
             update: about::UpdateUi::default(),
+            portal,
             network: None,
             osm_page: osm::OsmPage {
                 path: config.osm_path.clone(),
@@ -420,24 +452,30 @@ impl App {
         crate::android::request_device_info(true);
         // AI 项目列表先上缓存，网络刷新后覆盖
         app.ai_page.list = crate::api::model::load_ai_sports().unwrap_or_default();
-        if app.session.is_some() {
-            app.refresh_data_page();
-            app.refresh_records();
-            app.refresh_user_page();
-            app.refresh_ai_list();
-            app.refresh_fence();
-            app.refresh_points();
-        }
-        // 已配置 OSM 路网则启动时后台加载
-        if !app.config.osm_path.is_empty() {
-            let path = app.config.osm_path.clone();
-            app.load_osm_async(path);
+        // 已保存的平台会话先做一次在线校验；未通过前不启用任何功能
+        if app.portal.has_saved {
+            app.verify_portal_async();
         }
         app
     }
 
-    /// 后台任务（线程 + 日志 channel）。
+    /// 功能任务：执行前先在线校验平台授权（/p/pass）。
     pub fn spawn_job<F>(&self, f: F)
+    where
+        F: FnOnce(Sender<String>) + Send + 'static,
+    {
+        let tx = self.tx.clone();
+        let device_id = self.identity.device_id.clone();
+        std::thread::spawn(move || match crate::portal::verify_saved(&device_id) {
+            Ok(_) => f(tx),
+            Err(e) => {
+                tx.send(format!("{PORTAL_FAIL}{e}")).ok();
+            }
+        });
+    }
+
+    /// 不需要平台授权的启动/维护任务（更新检查、IP、登出、授权登录本身）。
+    pub fn spawn_ungated_job<F>(&self, f: F)
     where
         F: FnOnce(Sender<String>) + Send + 'static,
     {

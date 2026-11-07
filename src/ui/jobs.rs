@@ -30,7 +30,7 @@ impl App {
             self.tab = 8;
             self.status = "正在检查更新…".into();
         }
-        self.spawn_job(move |tx| {
+        self.spawn_ungated_job(move |tx| {
             let mut log = |s: &str| {
                 tx.send(s.to_string()).ok();
             };
@@ -52,7 +52,7 @@ impl App {
         self.update.done = 0;
         self.update.total = None;
         self.status = format!("正在下载 {}…", rel.tag);
-        self.spawn_job(move |tx| {
+        self.spawn_ungated_job(move |tx| {
             let outcome: Result<serde_json::Value, String> = (|| {
                 let mut report = |done: u64, total: Option<u64>| {
                     tx.send(format!("{UPDATE_PROG}{}/{}", done, total.unwrap_or(0)))
@@ -160,7 +160,7 @@ impl App {
     }
 
     pub(crate) fn fetch_ip(&mut self) {
-        self.spawn_job(|tx| {
+        self.spawn_ungated_job(|tx| {
             let agent = crate::api::client::make_agent();
             let mut log = App::logger(tx.clone());
             let mut ip = String::new();
@@ -251,7 +251,7 @@ impl App {
         let identity = self.identity.clone();
         let session = self.session.clone();
         self.session = None;
-        self.spawn_job(move |tx| {
+        self.spawn_ungated_job(move |tx| {
             let mut log = App::logger(tx.clone());
             if let Some(sess) = session {
                 let mut client = crate::api::client::ApiClient::new(identity, Some(sess));

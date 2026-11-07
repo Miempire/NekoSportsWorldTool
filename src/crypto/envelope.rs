@@ -84,8 +84,18 @@ pub fn aes128_cbc_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, Stri
     let key: &[u8; 16] = key
         .try_into()
         .map_err(|_| format!("AES key 必须是 16B，得到 {}", key.len()))?;
-    let iv = [0u8; 16];
-    Aes128CbcDec::new(key.into(), &iv.into())
+    aes128_cbc_decrypt_iv(key, &[0u8; 16], ciphertext)
+}
+
+/// AES-128-CBC / PKCS7 / 自定义 IV 解密（本地加密会话等使用）。
+pub fn aes128_cbc_decrypt_iv(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, String> {
+    let key: &[u8; 16] = key
+        .try_into()
+        .map_err(|_| format!("AES key 必须是 16B，得到 {}", key.len()))?;
+    let iv: &[u8; 16] = iv
+        .try_into()
+        .map_err(|_| format!("AES IV 必须是 16B，得到 {}", iv.len()))?;
+    Aes128CbcDec::new(key.into(), iv.into())
         .decrypt_padded_vec::<Pkcs7>(ciphertext)
         .map_err(|e| format!("AES 解密/PKCS7 失败: {e}"))
 }

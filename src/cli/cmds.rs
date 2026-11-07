@@ -11,6 +11,8 @@ use crate::api::model;
 /// 各命令允许的参数集合（拼写错误立即报错，而不是被静默忽略）。
 fn allowed_flags(cmd: &str) -> Option<&'static [&'static str]> {
     Some(match cmd {
+        "portal-login" => &["user", "pass"],
+        "portal-logout" => &[],
         "login" => &["user", "pass", "remember"],
         "logout" => &[],
         "send-code" => &["phone", "type"],
@@ -75,7 +77,25 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         }
     }
 
+    let portal_exempt = matches!(
+        cmd.as_str(),
+        "help" | "--help" | "-h" | "version" | "--version" | "-V" | "-v"
+            | "portal-login" | "portal-logout"
+    );
+    if allowed_flags(&cmd).is_some() && !portal_exempt {
+        let identity = model::load_identity();
+        if let Err(e) = crate::portal::verify_saved(&identity.device_id) {
+            eprintln!("平台授权验证失败：{e}");
+            eprintln!(
+                "请先登录静水空间：miempires-run-tool portal-login --user <用户名> --pass <密码>"
+            );
+            return 1;
+        }
+    }
+
     match cmd.as_str() {
+        "portal-login" => cmd_portal_login(&rest),
+        "portal-logout" => cmd_portal_logout(),
         "login" => cmd_login(&rest),
         "logout" => cmd_logout(),
         "send-code" => cmd_send_code(&rest),
@@ -127,6 +147,45 @@ pub fn dispatch(args: Vec<String>) -> i32 {
             1
         }
     }
+}
+
+fn cmd_portal_login(rest: &[&str]) -> i32 {
+    let flags = parse_flags(rest);
+    let env = |k: &str| std::env::var(k).ok().filter(|s| !s.trim().is_empty());
+    let user = get(&flags, "user")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| env("MRT_PORTAL_USER"))
+        .or_else(|| env("MRT_USER"));
+    let pass = get(&flags, "pass")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| env("MRT_PORTAL_PASS"))
+        .or_else(|| env("MRT_PASS"));
+    let (Some(user), Some(pass)) = (user, pass) else {
+        eprintln!("缺少 --user / --pass（也可用 MRT_PORTAL_USER / MRT_PORTAL_PASS）");
+        eprintln!("查看用法：miempires-run-tool help portal-login");
+        return 1;
+    };
+    let identity = model::load_identity();
+    match crate::portal::login_and_save(&user, &pass, &identity.device_id) {
+        Ok(session) => {
+            println!("欢迎登录，{}（授权日期 {}）", session.username, session.allowed_date);
+            0
+        }
+        Err(e) => {
+            eprintln!("平台登录失败：{e}");
+            1
+        }
+    }
+}
+
+fn cmd_portal_logout() -> i32 {
+    crate::portal::clear_saved();
+    println!("已清除本机平台授权");
+    0
 }
 
 fn cmd_login(rest: &[&str]) -> i32 {

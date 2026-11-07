@@ -68,6 +68,10 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
       - name: 设置 macOS 最低系统版本（Intel Mac 兼容旧系统）
         if: matrix.target == 'x86_64-apple-darwin'
         run: echo "MACOSX_DEPLOYMENT_TARGET=10.13" >> "$GITHUB_ENV"

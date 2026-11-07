@@ -1,0 +1,72 @@
+# Miempire's RUN TOOL 编译检查
+#
+# 触发方式：push 到 main、提交 Pull Request、Actions 页面手动运行。
+#
+# 目的：在打 tag 发布前就发现编译/借用/类型错误（release.yml 只在 tag 或手动
+# 时构建，问题暴露太晚）。检查矩阵与 release.yml 保持一致：
+#   Windows / macOS   → 默认特性（GUI + CLI）
+#   Linux             → --no-default-features（仅 CLI，与 Linux 发布产物一致）
+#
+# 只做 check + 单元测试，不产出安装包；产物构建见 release.yml / apk.yml。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            features: default
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            features: default
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            features: none
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-${{ matrix.target }}
+
+      - name: cargo check
+        shell: bash
+        run: |
+          if [ "${{ matrix.features }}" = "none" ]; then
+            cargo check --all-targets --no-default-features
+          else
+            cargo check --all-targets
+          fi
+
+      - name: cargo test
+        shell: bash
+        run: |
+          if [ "${{ matrix.features }}" = "none" ]; then
+            cargo test --no-default-features
+          else
+            cargo test
+          fi

@@ -207,7 +207,12 @@ impl App {
         self.config.osm_path = path.clone();
         let _ = crate::api::model::save_config(&self.config);
         let tx = self.net_tx.clone();
+        let device_id = self.identity.device_id.clone();
         std::thread::spawn(move || {
+            if let Err(e) = crate::portal::verify_saved(&device_id) {
+                let _ = tx.send(Err(format!("平台授权验证失败：{e}")));
+                return;
+            }
             let res = (|| -> Result<Arc<RoadGraph>, String> {
                 let bytes = std::fs::read(&path).map_err(|e| format!("读取失败: {e}"))?;
                 let net = route_planner::load_osm(&bytes)?;

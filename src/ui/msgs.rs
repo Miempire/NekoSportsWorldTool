@@ -3,8 +3,8 @@
 use super::about::FinishAction;
 use super::{
     App, PopupInfo, AI_DETAIL, AI_DONE, AI_LIST, AI_RECORDS, CHEAT, FENCE_DONE, IP, LOGIN_DONE,
-    POINTS_DONE, POLICY_DONE, RANK, RECORDS, RUN_DETAIL, RUN_DONE, SEMESTER, UPDATE_CHK,
-    UPDATE_DONE, UPDATE_PROG, USER,
+    POINTS_DONE, POLICY_DONE, PORTAL_FAIL, PORTAL_LOGIN, RANK, RECORDS, RUN_DETAIL, RUN_DONE,
+    SEMESTER, UPDATE_CHK, UPDATE_DONE, UPDATE_PROG, USER,
 };
 use crate::api::model;
 use chrono::TimeZone;
@@ -30,8 +30,68 @@ impl App {
         let mut update_chk = None;
         let mut update_prog = None;
         let mut update_done = None;
+        let mut portal_newly_authorized = false;
         while let Ok(msg) = self.rx.try_recv() {
-            if let Some(v) = msg.strip_prefix(IP) {
+            if let Some(v) = msg.strip_prefix(PORTAL_LOGIN) {
+                self.portal.busy = false;
+                self.portal.checking = false;
+                let val: serde_json::Value = serde_json::from_str(v).unwrap_or_default();
+                if val.get("ok").and_then(|b| b.as_bool()).unwrap_or(false) {
+                    let name = val
+                        .get("username")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let date = val
+                        .get("allowed_date")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    self.portal.username = name.clone();
+                    self.portal.allowed_date = date.clone();
+                    self.portal.has_saved = true;
+                    self.portal.password.clear();
+                    if crate::portal::date_allowed(&date) {
+                        self.portal.authorized = true;
+                        self.portal.error.clear();
+                        self.status = format!("平台登录成功（授权日期 {date}）");
+                        self.log.push(&format!("欢迎登录，{name}"));
+                        portal_newly_authorized = true;
+                    } else {
+                        let message = format!(
+                            "授权日期 {date} 晚于当前日期 {}，无法使用功能",
+                            crate::portal::today()
+                        );
+                        self.portal.authorized = false;
+                        self.portal.error = message.clone();
+                        self.status = message.clone();
+                        self.log.push(&format!("× {message}"));
+                    }
+                } else {
+                    let message = val
+                        .get("message")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("平台登录失败")
+                        .to_string();
+                    self.portal.authorized = false;
+                    self.portal.error = message.clone();
+                    self.status = message.clone();
+                    self.log.push(&format!("× {message}"));
+                }
+            } else if let Some(v) = msg.strip_prefix(PORTAL_FAIL) {
+                self.portal.busy = false;
+                self.portal.checking = false;
+                self.portal.authorized = false;
+                let message = if v.is_empty() {
+                    "平台授权验证失败".to_string()
+                } else {
+                    v.to_string()
+                };
+                self.status = format!("平台授权验证失败：{message}");
+                self.log
+                    .push(&format!("× 平台授权验证失败：{message}"));
+                self.portal.error = message;
+            } else if let Some(v) = msg.strip_prefix(IP) {
                 done_ip = Some(v.to_string());
             } else if msg == FENCE_DONE {
                 done_fence = true;
@@ -91,6 +151,20 @@ impl App {
                 update_done = Some(v.to_string());
             } else {
                 self.log.push(&msg);
+            }
+        }
+        if portal_newly_authorized {
+            if self.session.is_some() {
+                self.refresh_data_page();
+                self.refresh_records();
+                self.refresh_user_page();
+                self.refresh_ai_list();
+                self.refresh_fence();
+                self.refresh_points();
+            }
+            if self.network.is_none() && !self.config.osm_path.is_empty() {
+                let path = self.config.osm_path.clone();
+                self.load_osm_async(path);
             }
         }
         let got_semester = semester_json.is_some();
