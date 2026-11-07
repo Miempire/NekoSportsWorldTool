@@ -39,11 +39,6 @@ impl App {
         ui.heading("Miempire's RUN TOOL");
         ui.add_space(6.0);
         ui.label(format!("当前版本：v{}", crate::platform::version_name()));
-        let repo = crate::update::REPO_UPSTREAM;
-        ui.hyperlink_to(
-            egui::RichText::new(format!("https://github.com/{repo}/releases")).color(theme::text_dim()),
-            format!("https://github.com/{repo}/releases"),
-        );
         ui.add_space(4.0);
         ui.colored_label(
             theme::text_dim(),
@@ -73,10 +68,9 @@ impl App {
         if let Some(rel) = &self.update.latest {
             ui.add_space(6.0);
             ui.label(format!(
-                "最新版本：{}（{:.1} MB，{}）",
+                "最新版本：{}（{:.1} MB）",
                 rel.tag,
-                rel.asset_size as f64 / 1024.0 / 1024.0,
-                rel.repo
+                rel.asset_size as f64 / 1024.0 / 1024.0
             ));
             if !rel.title.is_empty() {
                 ui.colored_label(theme::text_dim(), &rel.title);
