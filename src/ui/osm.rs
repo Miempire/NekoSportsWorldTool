@@ -33,6 +33,30 @@ fn ring_to_pts(ring: &[Coord]) -> Vec<(f64, f64)> {
 }
 
 impl App {
+    /// 路网页的「选择文件 / 浏览」与「加载路网」按钮；返回是否请求加载。
+    fn osm_file_buttons(&mut self, ui: &mut egui::Ui) -> bool {
+        #[cfg(target_os = "android")]
+        if ui
+            .add_sized([112.0, mobile::TOUCH_HEIGHT], egui::Button::new("选择文件"))
+            .clicked()
+        {
+            self.osm_page.status = "正在等待选择文件…".into();
+            crate::platform::pick_osm_file();
+        }
+        #[cfg(not(target_os = "android"))]
+        if ui.button("浏览…").clicked() {
+            if let Some(p) = rfd::FileDialog::new()
+                .add_filter("OSM", &["osm", "xml", "pbf"])
+                .pick_file()
+            {
+                self.osm_page.path = p.display().to_string();
+            }
+        }
+        let can_load = !self.osm_page.path.is_empty() && !self.osm_page.busy;
+        ui.add_enabled(can_load, theme::primary_btn("加载路网"))
+            .clicked()
+    }
+
     pub fn draw_osm_page(&mut self, ui: &mut egui::Ui) {
         let mut load_now = false;
 
@@ -54,42 +78,39 @@ impl App {
             }
         }
 
-        mobile::row(ui, |ui| {
+        // 手机等窄屏：标签、路径框、按钮分行显示，避免导入按钮被挤出屏幕
+        let stacked = cfg!(target_os = "android") || mobile::compact_ui(ui);
+        if stacked {
             ui.label("OSM 文件：");
+            let path_width = ui.available_width();
             // Android 点按钮弹原生输入框（支持软键盘与粘贴）；桌面用普通输入框
             #[cfg(target_os = "android")]
-            mobile::file_path_edit(ui, "osm_path", &mut self.osm_page.path, 300.0);
+            mobile::file_path_edit(ui, "osm_path", &mut self.osm_page.path, path_width);
             #[cfg(not(target_os = "android"))]
             ui.add_sized(
-                [340.0, 26.0],
+                [path_width, 26.0],
                 egui::TextEdit::singleline(&mut self.osm_page.path)
                     .hint_text("拖入 .osm 文件或填写路径"),
             );
-            #[cfg(target_os = "android")]
-            if ui
-                .add_sized([112.0, mobile::TOUCH_HEIGHT], egui::Button::new("选择文件"))
-                .clicked()
-            {
-                self.osm_page.status = "正在等待选择文件…".into();
-                crate::platform::pick_osm_file();
-            }
-            #[cfg(not(target_os = "android"))]
-            if ui.button("浏览…").clicked() {
-                if let Some(p) = rfd::FileDialog::new()
-                    .add_filter("OSM", &["osm", "xml", "pbf"])
-                    .pick_file()
-                {
-                    self.osm_page.path = p.display().to_string();
-                }
-            }
-            let can_load = !self.osm_page.path.is_empty() && !self.osm_page.busy;
-            if ui
-                .add_enabled(can_load, theme::primary_btn("加载路网"))
-                .clicked()
-            {
-                load_now = true;
-            }
-        });
+            ui.add_space(4.0);
+            load_now |= ui
+                .horizontal_wrapped(|ui| self.osm_file_buttons(ui))
+                .inner;
+        } else {
+            mobile::row(ui, |ui| {
+                ui.label("OSM 文件：");
+                // Android 点按钮弹原生输入框（支持软键盘与粘贴）；桌面用普通输入框
+                #[cfg(target_os = "android")]
+                mobile::file_path_edit(ui, "osm_path", &mut self.osm_page.path, 300.0);
+                #[cfg(not(target_os = "android"))]
+                ui.add_sized(
+                    [340.0, 26.0],
+                    egui::TextEdit::singleline(&mut self.osm_page.path)
+                        .hint_text("拖入 .osm 文件或填写路径"),
+                );
+                load_now |= self.osm_file_buttons(ui);
+            });
+        }
 
         // 拖拽导入
         let dropped: Vec<String> = ui.ctx().input(|i| {
