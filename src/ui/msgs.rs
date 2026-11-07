@@ -58,7 +58,7 @@ impl App {
                         self.log.push(&format!("欢迎登录，{name}"));
                         portal_newly_authorized = true;
                     } else {
-                        let message = "授权不可用：授权日期晚于当前日期".to_string();
+                        let message = "授权不可用：已超过授权结束日期".to_string();
                         self.portal.authorized = false;
                         self.portal.error = message.clone();
                         self.status = message.clone();

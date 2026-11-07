@@ -97,6 +97,13 @@ impl App {
                                 ui.add_space(8.0);
                                 ui.colored_label(theme::err(), &self.portal.error);
                             }
+                            if !self.portal.allowed_date.is_empty() {
+                                ui.add_space(4.0);
+                                ui.colored_label(
+                                    theme::text_dim(),
+                                    format!("授权日期：{}", self.portal.allowed_date),
+                                );
+                            }
                             if self.portal.has_saved
                                 && !self.portal.busy
                                 && !self.portal.checking

@@ -178,11 +178,12 @@ pub fn today() -> String {
     Local::now().format("%Y.%m.%d").to_string()
 }
 
+/// 授权页日期定义为授权结束日期：当前日期超过该日期即失效。
 pub fn date_allowed(date: &str) -> bool {
     let Ok(value) = NaiveDate::parse_from_str(date.trim(), "%Y.%m.%d") else {
         return false;
     };
-    value <= Local::now().date_naive()
+    Local::now().date_naive() <= value
 }
 
 /// 读取 1..=max 位连续数字（遇到分隔符即停）。
@@ -311,7 +312,7 @@ fn verify_html(username: &str, html: &str) -> Result<PortalAccess, String> {
         return Err("授权页校验失败：未找到当前账号的授权信息".into());
     };
     if !date_allowed(&allowed_date) {
-        return Err("授权不可用：授权日期晚于当前日期".into());
+        return Err("授权不可用：已超过授权结束日期".into());
     }
     Ok(PortalAccess {
         username: username.to_string(),
