@@ -126,6 +126,15 @@ fn hidden_value(html: &str, name: &str) -> Option<String> {
     None
 }
 
+fn hex_nibble(byte: u8) -> Result<u8, String> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err("RSA 公钥参数不是十六进制".into()),
+    }
+}
+
 fn hex_bytes(value: &str) -> Result<Vec<u8>, String> {
     let value = value.trim();
     if value.is_empty() {
@@ -138,9 +147,7 @@ fn hex_bytes(value: &str) -> Result<Vec<u8>, String> {
     let mut out = Vec::with_capacity(text.len() / 2);
     let bytes = text.as_bytes();
     for pair in bytes.chunks(2) {
-        let hi = pair[0].to_digit(16).ok_or("RSA 公钥参数不是十六进制")? as u8;
-        let lo = pair[1].to_digit(16).ok_or("RSA 公钥参数不是十六进制")? as u8;
-        out.push((hi << 4) | lo);
+        out.push((hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?);
     }
     Ok(out)
 }
