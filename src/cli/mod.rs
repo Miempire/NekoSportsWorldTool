@@ -48,7 +48,7 @@ fn usage() {
   run      [--dist km] [--pace 秒/km|分:秒] [--altitude 米|最小-最大]
            [--ago 分钟 | --days-ago 0-3 --time HH:MM]
            [--face 0|1] [--seed n] [--route legacy|road]
-           跑步全链：策略-点位-轨迹-提交-OBS-验证
+           跑步全链：策略-点位-轨迹-提交-OBS-验证（每天仅可成功提交一次）
   template --file <GPX/JSON>
            本地读取真实记录并分析海拔（不会上传）
 
@@ -179,7 +179,8 @@ pub(crate) fn usage_cmd(cmd: &str) -> bool {
              \n  --face       是否做人脸校验 0|1，缺省 1\n\
              \n  --seed       随机种子；0 表示按当前时间取\n\
              \n  --must       只经过前 N 个策略必经点（缺省全部，0=不经过）\n\
-             \n  --route      legacy=打卡点环，road=真实道路路由（缺省取配置）"
+             \n  --route      legacy=打卡点环，road=真实道路路由（缺省取配置）\n\
+             \n  每天仅可成功提交一次，日期按本机时区计算"
         }
         "template" => "template --file <GPX/JSON>\n\n  本地读取真实记录，分析海拔范围与累计升降（不会上传）。",
         "ai" => {

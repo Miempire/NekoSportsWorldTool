@@ -567,7 +567,7 @@ impl App {
         self.draw_run_map(ui);
 
         ui.add_space(8.0);
-        let enabled = !self.run_busy && self.session.is_some();
+        let enabled = !self.run_busy && self.session.is_some() && !self.daily_used;
         let btn = if self.run_busy {
             theme::primary_btn("提交中…")
         } else {
@@ -579,6 +579,8 @@ impl App {
             }
             if self.session.is_none() {
                 ui.label("（请先登录）");
+            } else if self.daily_used {
+                ui.colored_label(theme::warn(), "（今日已使用，请明天再试）");
             }
         });
     }
@@ -1189,6 +1191,10 @@ impl App {
     }
 
     fn start_run(&mut self) {
+        if self.daily_used {
+            self.status = "今日已使用，请明天再试".into();
+            return;
+        }
         // 参数变更时补齐方案；提交直接使用预计算值
         self.run_page.ensure_plan();
         let page = &mut self.run_page;

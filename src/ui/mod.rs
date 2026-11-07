@@ -75,6 +75,8 @@ pub struct App {
     pub remember: bool,
     pub login_busy: bool,
     pub run_busy: bool,
+    /// 今天是否已成功提交过跑步（本地每日限制）。
+    pub daily_used: bool,
     pub ai_busy: bool,
     pub records_busy: bool,
     pub data_busy: bool,
@@ -112,6 +114,10 @@ impl eframe::App for App {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_messages();
+        // 跨天后自动解除本地每日限制
+        if self.daily_used && !crate::daily::used_today() {
+            self.daily_used = false;
+        }
         #[cfg(target_os = "android")]
         self.poll_device_info();
         crate::platform::set_keep_screen_on(
@@ -375,6 +381,7 @@ impl App {
             remember,
             login_busy: false,
             run_busy: false,
+            daily_used: crate::daily::used_today(),
             ai_busy: false,
             records_busy: false,
             data_busy: false,

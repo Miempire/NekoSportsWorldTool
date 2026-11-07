@@ -6,6 +6,7 @@ pub mod cli;
 pub mod geetoken;
 pub mod sensors;
 mod crypto;
+mod daily;
 pub mod location;
 pub mod platform;
 pub mod portal;
