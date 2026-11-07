@@ -125,11 +125,7 @@ impl eframe::App for App {
 
         if self.portal.authorized && !crate::portal::date_allowed(&self.portal.allowed_date) {
             self.portal.authorized = false;
-            self.portal.error = format!(
-                "授权日期 {} 晚于当前日期 {}，无法使用功能",
-                self.portal.allowed_date,
-                crate::portal::today()
-            );
+            self.portal.error = "授权不可用：授权日期晚于当前日期".into();
             self.log.push(&format!("× {}", self.portal.error));
         }
         if !self.portal.authorized {
@@ -167,7 +163,7 @@ impl eframe::App for App {
                 }
                 ui.colored_label(
                     theme::ok(),
-                    format!("平台：{}（{}）", self.portal.username, self.portal.allowed_date),
+                    format!("平台：{}", self.portal.username),
                 );
             };
             if compact {

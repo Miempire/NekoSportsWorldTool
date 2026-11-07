@@ -305,18 +305,13 @@ fn find_user_date(html: &str, username: &str) -> Option<String> {
 
 fn verify_html(username: &str, html: &str) -> Result<PortalAccess, String> {
     if !html.contains(PASS_TOKEN) {
-        return Err(format!("授权页缺少验证串 {PASS_TOKEN}"));
+        return Err("授权页校验失败：缺少必需的验证标记".into());
     }
     let Some(allowed_date) = find_user_date(html, username) else {
-        return Err(format!(
-            "授权页未找到用户 {username} 的授权日期（格式：{username}:YYYY.MM.DD）"
-        ));
+        return Err("授权页校验失败：未找到当前账号的授权信息".into());
     };
     if !date_allowed(&allowed_date) {
-        return Err(format!(
-            "授权日期 {allowed_date} 晚于当前日期 {}，无法使用功能",
-            today()
-        ));
+        return Err("授权不可用：授权日期晚于当前日期".into());
     }
     Ok(PortalAccess {
         username: username.to_string(),

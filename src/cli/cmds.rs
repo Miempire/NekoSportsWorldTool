@@ -172,7 +172,7 @@ fn cmd_portal_login(rest: &[&str]) -> i32 {
     let identity = model::load_identity();
     match crate::portal::login_and_save(&user, &pass, &identity.device_id) {
         Ok(session) => {
-            println!("欢迎登录，{}（授权日期 {}）", session.username, session.allowed_date);
+            println!("欢迎登录，{}", session.username);
             0
         }
         Err(e) => {

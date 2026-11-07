@@ -54,14 +54,11 @@ impl App {
                     if crate::portal::date_allowed(&date) {
                         self.portal.authorized = true;
                         self.portal.error.clear();
-                        self.status = format!("平台登录成功（授权日期 {date}）");
+                        self.status = "平台登录成功".into();
                         self.log.push(&format!("欢迎登录，{name}"));
                         portal_newly_authorized = true;
                     } else {
-                        let message = format!(
-                            "授权日期 {date} 晚于当前日期 {}，无法使用功能",
-                            crate::portal::today()
-                        );
+                        let message = "授权不可用：授权日期晚于当前日期".to_string();
                         self.portal.authorized = false;
                         self.portal.error = message.clone();
                         self.status = message.clone();
