@@ -30,7 +30,8 @@ struct Colors {
     extreme_bg: Color32,
     faint_bg: Color32,
     btn_text: Color32,
-    grid_line: Color32,
+    /// 背景网格线颜色（RGBA 分量；from_rgba_unmultiplied 非 const fn，运行时构造）。
+    grid_line: [u8; 4],
     map_bg: Color32,
     map_road: Color32,
     map_building: Color32,
@@ -59,7 +60,7 @@ const LEGACY: Colors = Colors {
     extreme_bg: Color32::from_rgb(7, 13, 23),
     faint_bg: Color32::from_rgb(14, 24, 40),
     btn_text: Color32::from_rgb(4, 18, 30),
-    grid_line: Color32::from_rgba_unmultiplied(64, 150, 210, 9),
+    grid_line: [64, 150, 210, 9],
     map_bg: Color32::from_rgb(6, 11, 18),
     map_road: Color32::from_rgb(58, 103, 143),
     map_building: Color32::from_rgb(30, 60, 92),
@@ -89,7 +90,7 @@ const SAKURA: Colors = Colors {
     extreme_bg: Color32::from_rgb(19, 12, 18),
     faint_bg: Color32::from_rgb(36, 22, 34),
     btn_text: Color32::from_rgb(46, 10, 32),
-    grid_line: Color32::from_rgba_unmultiplied(215, 125, 185, 9),
+    grid_line: [215, 125, 185, 9],
     map_bg: Color32::from_rgb(18, 10, 16),
     map_road: Color32::from_rgb(112, 70, 102),
     map_building: Color32::from_rgb(60, 38, 55),
@@ -301,7 +302,11 @@ pub fn paint_corners(ui: &egui::Ui) {
 
 pub fn paint_grid(ui: &egui::Ui) {
     let rect = ui.max_rect();
-    let stroke = egui::Stroke::new(1.0_f32, colors().grid_line);
+    let g = colors().grid_line;
+    let stroke = egui::Stroke::new(
+        1.0_f32,
+        Color32::from_rgba_unmultiplied(g[0], g[1], g[2], g[3]),
+    );
     let p = ui.painter();
     let step = 36.0;
     let mut x = rect.left() - rect.left().rem_euclid(step);

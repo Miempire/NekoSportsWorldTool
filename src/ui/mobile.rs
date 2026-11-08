@@ -95,7 +95,7 @@ pub fn tab_bar(ui: &mut egui::Ui, selected: &mut usize) -> Vec<egui::Response> {
                     ui.painter().rect_stroke(
                         response.rect,
                         egui::Rounding::same(3.0),
-                        egui::Stroke::new(1.0, super::theme::accent_dim()),
+                        egui::Stroke::new(1.0_f32, super::theme::accent_dim()),
                     );
                 }
                 if response.clicked() {
@@ -115,7 +115,7 @@ pub fn tab_bar(ui: &mut egui::Ui, selected: &mut usize) -> Vec<egui::Response> {
                     ui.painter().rect_stroke(
                         response.rect,
                         egui::Rounding::same(3.0),
-                        egui::Stroke::new(1.0, super::theme::accent_dim()),
+                        egui::Stroke::new(1.0_f32, super::theme::accent_dim()),
                     );
                 }
                 if response.clicked() {
