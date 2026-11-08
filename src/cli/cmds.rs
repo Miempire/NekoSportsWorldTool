@@ -1059,7 +1059,14 @@ fn cmd_obs_sample(rest: &[&str]) -> i32 {
     };
     let sess = client.login.clone().unwrap_or_default();
     let uuid = uuid::Uuid::new_v4().to_string().to_uppercase();
-    let obj = crate::track::wire::build_obs_object(&track, rrid, &uuid, sess.uid, &pts);
+    let obj = crate::track::wire::build_obs_object(
+        &track,
+        rrid,
+        &uuid,
+        sess.uid,
+        &pts,
+        &client.identity.platform,
+    );
     let out = get(&flags, "out").unwrap_or("obs_ours.json");
     let decoded = decode_gz_fields(&obj);
     std::fs::write(

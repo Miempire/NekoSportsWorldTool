@@ -343,7 +343,7 @@ mod tests {
             None,
         )
         .expect("build");
-        let obj = build_obs_object(&track, 1320403809, "UUID-TEST", 13056447, &pts);
+        let obj = build_obs_object(&track, 1320403809, "UUID-TEST", 13056447, &pts, "android");
         let keys: Vec<&str> = obj
             .as_object()
             .unwrap()

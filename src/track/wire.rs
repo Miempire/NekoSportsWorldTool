@@ -148,7 +148,7 @@ mod validation_tests {
         )
         .expect("build");
         crate::track::altitude::override_bd_a(&mut track, 36.75).unwrap();
-        let laps = build_laps(&track, track.startTime);
+        let laps = build_laps(&track, track.startTime, "android");
         assert!(!laps.is_empty());
         assert!(laps.iter().all(|lap| lap["elevationGain"] == 0.0));
         assert!(laps.iter().all(|lap| lap["endAltAbs"] == 36.75));
@@ -174,7 +174,7 @@ mod validation_tests {
             None,
         )
         .expect("build");
-        let laps = build_laps(&track, track.startTime);
+        let laps = build_laps(&track, track.startTime, "android");
         assert_eq!(laps.len(), 4, "3300m 应为 3 整圈 + 1 尾圈");
         for (i, lap) in laps.iter().enumerate() {
             let d = lap["distance"].as_f64().unwrap();
@@ -235,7 +235,8 @@ fn build_windows(track: &Track, rrid: i64) -> (Vec<Value>, Vec<Value>) {
     (sp, stf)
 }
 
-/// 单圈对象（avgStride 单位厘米，avgPace 单位分钟/公里）。
+/// 单圈对象（avgStride 单位厘米；avgPace 单位按平台：iOS=秒/公里，Android=分钟/公里）。
+#[allow(clippy::too_many_arguments)]
 fn lap_json(
     idx: i64,
     lap_d: f64,
@@ -246,10 +247,18 @@ fn lap_json(
     start_ms: i64,
     lap_start_t: i64,
     gain: f64,
+    platform: &str,
 ) -> Value {
+    // iOS 客户端按「秒/公里」解析 avgPace 并格式化为 分'秒''；
+    // 若写成分钟/公里会被缩到 1/60（7'00" 显示成 0'07"）。安卓端为分钟/公里。
+    let avg_pace = if platform == "ios" {
+        round_to(lap_t as f64 / (lap_d / 1000.0), 2)
+    } else {
+        round_to((lap_t as f64 / 60.0) / (lap_d / 1000.0), 2)
+    };
     json!({
         "avgCadence": round_to(lap_steps as f64 / (lap_t as f64 / 60.0), 2),
-        "avgPace": round_to((lap_t as f64 / 60.0) / (lap_d / 1000.0), 2),
+        "avgPace": avg_pace,
         "avgStride": round_to(lap_d / 1.max(lap_steps) as f64 * 100.0, 2),
         "cumulativeDuration": lap_start_t + lap_t,
         "distance": round_to(lap_d, 4),
@@ -271,7 +280,7 @@ fn lap_json(
 /// 旧写法取「首个累计距离 ≥1000m 的采样点」切圈，5s 采样网格 × 中速会让每圈
 /// 拉长 1~3%（首圈尤其明显，约 1015~1020m），使首段 `duration`/`avgPace` 偏大。
 /// 不足 1m 的尾部余量不构成一圈（0 距离圈会算出 16.7 的整数倍这种荒谬配速）。
-fn build_laps(track: &Track, start_ms: i64) -> Vec<Value> {
+fn build_laps(track: &Track, start_ms: i64, platform: &str) -> Vec<Value> {
     let locs = &track.locations;
     let mut laps = Vec::new();
     if locs.len() < 2 {
@@ -313,6 +322,7 @@ fn build_laps(track: &Track, start_ms: i64) -> Vec<Value> {
                 start_ms,
                 cur_t,
                 gain,
+                platform,
             ));
             cur_d = target;
             cur_t = end_t;
@@ -336,24 +346,27 @@ fn build_laps(track: &Track, start_ms: i64) -> Vec<Value> {
             start_ms,
             cur_t,
             gain,
+            platform,
         ));
     }
     laps
 }
 
 /// 组装 10 键 OBS 对象（值均 gzip+base64；segment_json/runFaceCheck 为空串 gzip）。
+/// `platform` 决定 laps_json 的 avgPace 口径：iOS=秒/公里，Android=分钟/公里。
 pub fn build_obs_object(
     track: &Track,
     rrid: i64,
     uuid: &str,
     uid: i64,
     live_points: &[Value],
+    platform: &str,
 ) -> Value {
     let start_ms = track.startTime;
     let pts: Vec<Value> = track.locations.iter().map(|p| conv_point(p, start_ms)).collect();
     let run_wrap = json!({ "allLocJson": Value::Array(pts).to_string(), "useZip": false });
     let (sp, stf) = build_windows(track, rrid);
-    let laps = build_laps(track, start_ms);
+    let laps = build_laps(track, start_ms, platform);
     let five = five_point_payload(live_points, start_ms);
     let fx = json!({
         "fivePointJson": Value::Array(five).to_string(),
