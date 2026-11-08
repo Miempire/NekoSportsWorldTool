@@ -113,6 +113,15 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 登录门禁页保留原有蓝青科技风；授权后主界面切樱花粉二次元风。
+        let palette = if self.portal.authorized {
+            theme::Palette::Sakura
+        } else {
+            theme::Palette::Legacy
+        };
+        if theme::palette() != palette {
+            theme::apply(ctx, palette);
+        }
         self.poll_messages();
         // 跨天后自动解除本地每日限制
         if self.daily_used && !crate::daily::used_today() {
@@ -355,7 +364,8 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         let (net_tx, net_rx) = std::sync::mpsc::channel();
         let font_loaded = fonts::install(&cc.egui_ctx);
-        theme::apply(&cc.egui_ctx);
+        // 启动时总是先落到登录门禁页：用 Legacy 蓝青主题。
+        theme::apply(&cc.egui_ctx, theme::Palette::Legacy);
         let identity = model::load_identity();
         let device_buf = identity.clone();
         let session = model::load_session();
