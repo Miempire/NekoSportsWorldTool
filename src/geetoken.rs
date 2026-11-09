@@ -288,6 +288,25 @@ fn generate_dev(
         bt: uptime,
         ..GtDevProfile::default()
     };
+    // iOS 设备档案覆盖：默认模板是安卓形态（os/包名/apk 路径/安卓版本号），
+    // iPhone 身份下不改会与登录平台矛盾。bundle id 按安卓命名规律推断，
+    // prp 用 iOS 容器路径形态，UUID 由 device_id 派生保持稳定（真机重装才会变）。
+    if identity.platform == "ios" {
+        dev.os = "ios".into();
+        dev.ven = "com.zjwh.ios_wh_physicalfitness".into();
+        let h = crate::crypto::envelope::md5_hex(identity.device_id.as_bytes());
+        let uuid = format!(
+            "{}-{}-{}-{}-{}",
+            &h[0..8],
+            &h[8..12],
+            &h[12..16],
+            &h[16..20],
+            &h[20..32]
+        )
+        .to_uppercase();
+        dev.prp = format!("/var/containers/Bundle/Application/{uuid}/YGTY.app");
+        dev.rel = crate::crypto::header::IOS_APP_VERSION.into();
+    }
     if let Some(battery) = &identity.battery {
         dev.bs = battery.status as i64;
         dev.br = battery.level as i64;

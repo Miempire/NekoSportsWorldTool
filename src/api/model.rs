@@ -206,7 +206,10 @@ pub fn refresh_derived(identity: &mut HeaderIdentity) {
         .gt
         .as_ref()
         .map(|state| {
-            state.dev.model != identity.device_name || state.dev.osv != identity.os_version
+            state.dev.model != identity.device_name
+                || state.dev.osv != identity.os_version
+                // iOS 档案曾误用安卓形态（os/ven/prp），检测到即触发重算迁移
+                || (identity.platform == "ios" && state.dev.os != "ios")
         })
         .unwrap_or(true);
 
