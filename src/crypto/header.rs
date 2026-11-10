@@ -329,7 +329,7 @@ mod tests {
     fn test_android_header_shape() {
         let identity = HeaderIdentity {
             platform: "android".into(),
-            device_id: "D0FA3EA16-46F0-4E44-9A97-1B63F0D9B11A".into(),
+            device_id: "D0FA3EA1-46F0-4E44-9A97-1B63F0D9B11A".into(),
             os_version: "14".into(),
             device_name: "22081212C".into(),
             ..Default::default()
@@ -339,7 +339,7 @@ mod tests {
         assert_eq!(v["osType"], "0");
         assert_eq!(v["appVersion"], ANDROID_APP_VERSION);
         // 真机口径：32 位 hex 小写、无 studentId、全部值为字符串。
-        assert_eq!(v["DeviceId"], "0fa3ea1646f04e449a971b63f0d9b11a");
+        assert_eq!(v["DeviceId"], "d0fa3ea146f04e449a971b63f0d9b11a");
         assert_eq!(v["isRoot"], "0");
         assert_eq!(v["uid"], "42");
         assert_eq!(v["CustomDeviceId"], "");
