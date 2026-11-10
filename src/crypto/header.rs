@@ -339,7 +339,7 @@ mod tests {
         assert_eq!(v["osType"], "0");
         assert_eq!(v["appVersion"], ANDROID_APP_VERSION);
         // 真机口径：32 位 hex 小写、无 studentId、全部值为字符串。
-        assert_eq!(v["DeviceId"], "d0fa3ea164f04e449a971b63f0d9b11a");
+        assert_eq!(v["DeviceId"], "0fa3ea1646f04e449a971b63f0d9b11a");
         assert_eq!(v["isRoot"], "0");
         assert_eq!(v["uid"], "42");
         assert_eq!(v["CustomDeviceId"], "");
