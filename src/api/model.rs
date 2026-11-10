@@ -599,7 +599,11 @@ mod storage_tests {
         let (header, _) =
             crate::crypto::header::build_header_for(&reloaded, 0, "", Some(1_700_000_000_000));
         let header: serde_json::Value = serde_json::from_str(&header).unwrap();
-        assert_eq!(header["DeviceId"], first.device_id);
+        assert_eq!(
+            header["DeviceId"],
+            first.device_id.replace('-', "").to_lowercase(),
+            "Android DeviceId must be 32-char lowercase hex"
+        );
         assert_eq!(
             header["deviceName"], "Phone 16",
             "brand must not be prepended to the protocol model field"

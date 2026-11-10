@@ -16,6 +16,9 @@ pub const ANDROID_APP_VERSION: &str = "7.4.0";
 pub const UA_IOS: &str = "SWCampus/7.4.0 (iPhone; iOS 18.1; Scale/3.00)";
 pub const UA_ANDROID: &str = "Mozilla/5.0 (Linux; Android 14; 22081212C Build/UKQ1.231003.002) AppleWebKit/537.36 SWCampus/7.4.0";
 
+/// 真机样本 appUpdateTime − appInstallTime ≈ 26.8 天（覆盖安装）。
+pub const ANDROID_UPDATE_DELAY_MS: i64 = 2_315_520_000;
+
 /// 设备身份。app_install_time <= 0 表示尚未生成。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HeaderIdentity {
@@ -138,6 +141,26 @@ fn insert_uuid(map: &mut serde_json::Map<String, serde_json::Value>) -> String {
     u
 }
 
+/// 真机 nonce 是 32 位小写 UUID 文本。
+fn insert_uuid_lower(map: &mut serde_json::Map<String, serde_json::Value>) -> String {
+    let u = uuid::Uuid::new_v4().to_string();
+    map.insert("nonce".into(), serde_json::Value::String(u.clone()));
+    u
+}
+
+/// Android DeviceId 规范：真机为 32 位 hex 小写、无连字符。
+/// UUID 去连字符即可；非 hex 的持久值用 MD5 派生，保证跨请求稳定。
+pub fn android_device_id(raw: &str) -> String {
+    let hex: String = raw.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if hex.len() == 32 {
+        return hex.to_lowercase();
+    }
+    if raw.trim().is_empty() {
+        return uuid::Uuid::new_v4().simple().to_string();
+    }
+    md5_hex(raw.as_bytes())
+}
+
 /// iOS 请求头明文（SWRequestHeaderProvider._fillFullHeaders 字段序）。
 /// 返回 (紧凑 JSON, HTTP 附加头字段: nonce/tokenSign/timeStamp)。
 pub fn build_native_ios_header(
@@ -198,7 +221,7 @@ pub fn build_native_ios_header(
     (serde_json::to_string(&m).unwrap_or_default(), extra)
 }
 
-/// Android 399 请求头明文（NativeNetworkCommonHeaders.build 键集，osType="0"）。
+/// Android 请求头明文（真机 23 键，插入序与真机一致，osType="0"，值全为字符串）。
 pub fn build_android_header(
     identity: &HeaderIdentity,
     uid: i64,
@@ -206,40 +229,34 @@ pub fn build_android_header(
     timestamp_ms: Option<i64>,
 ) -> (String, Vec<(String, String)>) {
     let mut m = serde_json::Map::new();
-    let device_id = if identity.device_id.is_empty() {
-        uuid::Uuid::new_v4().to_string().to_uppercase()
-    } else {
-        identity.device_id.clone()
-    };
+    let device_id = android_device_id(&identity.device_id);
     let ts = timestamp_ms.unwrap_or_else(now_ms);
     let install = identity.install_time(ts);
+    let update = install + ANDROID_UPDATE_DELAY_MS;
 
     m.insert("Accept".into(), serde_json::Value::String("application/json".into()));
     m.insert("Content-Type".into(), serde_json::Value::String("application/json".into()));
     m.insert("appVersion".into(), serde_json::Value::String(ANDROID_APP_VERSION.into()));
     m.insert("osType".into(), serde_json::Value::String("0".into()));
-    m.insert("DeviceId".into(), serde_json::Value::String(device_id.clone()));
     m.insert("osVersion".into(), serde_json::Value::String(identity.os_version.clone()));
+    m.insert("DeviceId".into(), serde_json::Value::String(device_id));
     m.insert("deviceName".into(), serde_json::Value::String(identity.device_name.clone()));
+    m.insert("cpuModel".into(), serde_json::Value::String("arm64-v8a".into()));
+    // 真机 logicPixel = physicPixel / 3。
+    m.insert("logicPixel".into(), serde_json::Value::String("400x805".into()));
+    m.insert("physicPixel".into(), serde_json::Value::String("1200x2416".into()));
+    m.insert("isRoot".into(), serde_json::Value::String("0".into()));
     m.insert("IMEI".into(), serde_json::Value::String(String::new()));
-    m.insert("logicPixel".into(), serde_json::Value::String("1080x2400".into()));
-    m.insert("physicPixel".into(), serde_json::Value::String("1080x2400".into()));
     m.insert("androidId".into(), serde_json::Value::String(String::new()));
     m.insert("blMac".into(), serde_json::Value::String(String::new()));
     m.insert("wifiMac".into(), serde_json::Value::String(String::new()));
-    m.insert("cpuModel".into(), serde_json::Value::String("arm64-v8a".into()));
-    m.insert("isRoot".into(), serde_json::Value::Bool(false));
-    m.insert("appUpdateTime".into(), serde_json::Value::from(install));
-    m.insert("appInstallTime".into(), serde_json::Value::from(install));
-    let nonce = insert_uuid(&mut m);
-    m.insert("timeStamp".into(), serde_json::Value::from(ts));
-    m.insert(
-        "CustomDeviceId".into(),
-        serde_json::Value::String(format!("{device_id}_android_sportsWorld_campus")),
-    );
-    m.insert("uid".into(), serde_json::Value::from(uid));
+    m.insert("CustomDeviceId".into(), serde_json::Value::String(String::new()));
+    m.insert("appInstallTime".into(), serde_json::Value::String(install.to_string()));
+    m.insert("appUpdateTime".into(), serde_json::Value::String(update.to_string()));
+    m.insert("uid".into(), serde_json::Value::String(uid.to_string()));
     m.insert("token".into(), serde_json::Value::String(token.to_string()));
-    m.insert("studentId".into(), serde_json::Value::from(uid));
+    m.insert("timeStamp".into(), serde_json::Value::String(ts.to_string()));
+    let nonce = insert_uuid_lower(&mut m);
     let sign = native_token_sign(uid, token, ts);
     m.insert("tokenSign".into(), serde_json::Value::String(sign.clone()));
 
@@ -321,7 +338,20 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["osType"], "0");
         assert_eq!(v["appVersion"], ANDROID_APP_VERSION);
-        assert_eq!(v["studentId"], 42);
+        // 真机口径：32 位 hex 小写、无 studentId、全部值为字符串。
+        assert_eq!(v["DeviceId"], "d0fa3ea164f04e449a971b63f0d9b11a");
+        assert_eq!(v["isRoot"], "0");
+        assert_eq!(v["uid"], "42");
+        assert_eq!(v["CustomDeviceId"], "");
+        assert_eq!(v["logicPixel"], "400x805");
+        assert_eq!(v["physicPixel"], "1200x2416");
+        assert!(v.get("studentId").is_none());
+        let install = 1788958186123i64 - 90 * 86_400_000;
+        assert_eq!(v["appInstallTime"], install.to_string());
+        assert_eq!(v["appUpdateTime"], (install + ANDROID_UPDATE_DELAY_MS).to_string());
+        assert_eq!(v.as_object().unwrap().len(), 23);
+        let nonce = v["nonce"].as_str().unwrap();
+        assert_eq!(nonce, nonce.to_lowercase());
         assert!(v.get("tokenSign").is_some());
         assert!(json.starts_with("{\"Accept\":\"application/json\""));
     }
@@ -336,13 +366,15 @@ mod tests {
         let v2: serde_json::Value = serde_json::from_str(&j2).unwrap();
         assert_eq!(v1["appInstallTime"], v2["appInstallTime"]);
         assert_eq!(v1["appInstallTime"], 1_700_000_000_000_i64);
-        // Android appUpdateTime == appInstallTime，同样稳定
+        // Android 安装/更新时间同样稳定，且 update 恒比 install 晚 26.8 天
         let (a1, _) = build_android_header(&identity, 1, "T", Some(1788958186123));
         let (a2, _) = build_android_header(&identity, 1, "T", Some(1788958190000));
         let a1: serde_json::Value = serde_json::from_str(&a1).unwrap();
         let a2: serde_json::Value = serde_json::from_str(&a2).unwrap();
-        assert_eq!(a1["appInstallTime"], a2["appInstallTime"]);
-        assert_eq!(a1["appUpdateTime"], a1["appInstallTime"]);
+        assert_eq!(a1["appInstallTime"], "1700000000000");
+        assert_eq!(a2["appInstallTime"], "1700000000000");
+        assert_eq!(a1["appUpdateTime"], "1702315520000");
+        assert_eq!(a2["appUpdateTime"], "1702315520000");
         // 身份未持久化安装时间时，回退值在同一请求内至少自洽
         let fallback = HeaderIdentity::default();
         assert_eq!(fallback.install_time(1000), 1000 - 3 * 86_400_000);
