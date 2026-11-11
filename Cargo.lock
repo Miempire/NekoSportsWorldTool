@@ -2261,6 +2261,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "miempires-run-tool"
+version = "1.4.2"
+dependencies = [
+ "aes",
+ "android-activity",
+ "android_logger",
+ "base64",
+ "cbc",
+ "chrono",
+ "eframe",
+ "egui",
+ "egui_extras",
+ "flate2",
+ "image",
+ "jni 0.21.1",
+ "log",
+ "md-5",
+ "rand 0.8.8",
+ "rand_distr",
+ "rfd",
+ "route-planner",
+ "rsa",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "ureq",
+ "uuid",
+ "winit",
+ "zip",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2366,39 +2399,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
-]
-
-[[package]]
-name = "miempires-run-tool"
-version = "1.4.2"
-dependencies = [
- "aes",
- "android-activity",
- "android_logger",
- "base64",
- "cbc",
- "chrono",
- "eframe",
- "egui",
- "egui_extras",
- "flate2",
- "image",
- "jni 0.21.1",
- "log",
- "md-5",
- "rand 0.8.8",
- "rand_distr",
- "rfd",
- "route-planner",
- "rsa",
- "serde",
- "serde_json",
- "sha2",
- "tar",
- "ureq",
- "uuid",
- "winit",
- "zip",
 ]
 
 [[package]]

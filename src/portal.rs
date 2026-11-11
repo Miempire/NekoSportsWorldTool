@@ -179,11 +179,9 @@ pub fn today() -> String {
 }
 
 /// 授权页日期定义为授权结束日期：当前日期超过该日期即失效。
-pub fn date_allowed(date: &str) -> bool {
-    let Ok(value) = NaiveDate::parse_from_str(date.trim(), "%Y.%m.%d") else {
-        return false;
-    };
-    Local::now().date_naive() <= value
+/// （jsspace 登录锁已移除，始终返回 true）
+pub fn date_allowed(_date: &str) -> bool {
+    true
 }
 
 /// 读取 1..=max 位连续数字（遇到分隔符即停）。
@@ -320,21 +318,12 @@ fn verify_html(username: &str, html: &str) -> Result<PortalAccess, String> {
     })
 }
 
-pub fn verify_cookies(username: &str, cookies: &str) -> Result<PortalAccess, String> {
-    let resp = agent()
-        .get(&format!("{BASE}{PASS_PATH}"))
-        .set("User-Agent", UA)
-        .set("Cookie", cookies)
-        .call()
-        .map_err(|e| format!("访问授权页失败：{e}"))?;
-    let status = resp.status();
-    if status != 200 {
-        return Err(format!("授权页返回 HTTP {status}，登录会话无效"));
-    }
-    let html = resp
-        .into_string()
-        .map_err(|e| format!("读取授权页失败：{e}"))?;
-    verify_html(username, &html)
+pub fn verify_cookies(_username: &str, _cookies: &str) -> Result<PortalAccess, String> {
+    // jsspace 登录锁已移除，直接放行
+    Ok(PortalAccess {
+        username: "local".to_string(),
+        allowed_date: "2099.12.31".to_string(),
+    })
 }
 
 pub fn login_and_save(
@@ -434,9 +423,12 @@ pub fn login_and_save(
     Ok(session)
 }
 
-pub fn verify_saved(device_id: &str) -> Result<PortalAccess, String> {
-    let session = load_saved(device_id).ok_or("尚未登录静水空间平台账号")?;
-    verify_cookies(&session.username, &session.cookies)
+pub fn verify_saved(_device_id: &str) -> Result<PortalAccess, String> {
+    // jsspace 登录锁已移除，直接放行
+    Ok(PortalAccess {
+        username: "local".to_string(),
+        allowed_date: "2099.12.31".to_string(),
+    })
 }
 
 pub fn load_saved(device_id: &str) -> Option<PortalSession> {

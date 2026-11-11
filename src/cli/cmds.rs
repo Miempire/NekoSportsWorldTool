@@ -510,10 +510,7 @@ fn cmd_geetoken(rest: &[&str]) -> i32 {
 
 fn cmd_run(rest: &[&str]) -> i32 {
     let flags = parse_flags(rest);
-    if crate::daily::used_today() {
-        eprintln!("今日已成功提交过跑步（每日限一次），请明天再试");
-        return 1;
-    }
+    // 每日一次限制已移除，不再拦截
     let mut client = match make_client() {
         Ok(c) => c,
         Err(e) => {
@@ -715,9 +712,7 @@ fn cmd_run(rest: &[&str]) -> i32 {
                 out.obs_ok,
                 if out.detail_ok { "通过" } else { "未通过" }
             );
-            if let Err(e) = crate::daily::mark_used() {
-                eprintln!("每日使用记录写入失败：{e}");
-            }
+            // 每日一次限制已移除，不再 mark_used
             0
         }
         Err(e) => {

@@ -22,21 +22,13 @@ fn today() -> String {
 }
 
 /// 今天是否已经成功提交过跑步。
+/// （每日一次限制已移除，始终返回 false）
 pub fn used_today() -> bool {
-    let Ok(text) = std::fs::read_to_string(usage_path()) else {
-        return false;
-    };
-    let usage: DailyUsage = serde_json::from_str(&text).unwrap_or_default();
-    usage.last_used_date == today()
+    false
 }
 
 /// 记录今天已使用；同一天重复调用只覆盖为同一日期。
+/// （每日一次限制已移除，空实现）
 pub fn mark_used() -> Result<(), String> {
-    let usage = DailyUsage {
-        last_used_date: today(),
-    };
-    let json = serde_json::to_string_pretty(&usage)
-        .map_err(|e| format!("序列化每日使用记录失败: {e}"))?;
-    let path = usage_path();
-    std::fs::write(&path, json).map_err(|e| format!("写入 {} 失败: {e}", path.display()))
+    Ok(())
 }

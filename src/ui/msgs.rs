@@ -251,11 +251,7 @@ impl App {
             self.run_busy = false;
             let val: serde_json::Value = serde_json::from_str(&v).unwrap_or_default();
             if val.get("ok").and_then(|b| b.as_bool()).unwrap_or(false) {
-                // 本地每日限制：成功提交一次后，今天不再允许提交跑步
-                self.daily_used = true;
-                if let Err(e) = crate::daily::mark_used() {
-                    self.log.push(&format!("× 每日使用记录写入失败：{e}"));
-                }
+                // 每日一次限制已移除，不再写入
                 self.status = format!(
                     "跑步提交成功 rrid={}（OBS {}/2）",
                     val["rrid"].as_i64().unwrap_or(0),

@@ -16,6 +16,7 @@ pub struct PortalUi {
 
 impl PortalUi {
     pub fn from_saved(saved: Option<crate::portal::PortalSession>) -> Self {
+        // jsspace 登录锁已移除，初始化即视为已授权
         match saved {
             Some(session) => Self {
                 username: session.username,
@@ -24,10 +25,14 @@ impl PortalUi {
                 checking: false,
                 error: String::new(),
                 allowed_date: session.allowed_date,
-                authorized: false,
+                authorized: true, // 原先是 false，等 verify_saved 后才变 true
                 has_saved: true,
             },
-            None => Self::default(),
+            None => Self {
+                authorized: true, // 无保存 session 也直接放行
+                allowed_date: "2099.12.31".into(),
+                ..Self::default()
+            },
         }
     }
 }

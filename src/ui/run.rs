@@ -567,7 +567,7 @@ impl App {
         self.draw_run_map(ui);
 
         ui.add_space(8.0);
-        let enabled = !self.run_busy && self.session.is_some() && !self.daily_used;
+        let enabled = !self.run_busy && self.session.is_some();
         let btn = if self.run_busy {
             theme::primary_btn("提交中…")
         } else {

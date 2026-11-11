@@ -139,15 +139,14 @@ impl eframe::App for App {
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
 
         if self.portal.authorized && !crate::portal::date_allowed(&self.portal.allowed_date) {
-            self.portal.authorized = false;
-            self.portal.error = "授权不可用：已超过授权结束日期".into();
-            self.log.push(&format!("× {}", self.portal.error));
+            // jsspace 登录锁已移除，日期不再影响授权状态
         }
-        if !self.portal.authorized {
-            self.draw_portal_gate(ctx);
-            crate::platform::sync_clipboard(ctx);
-            return;
-        }
+        // jsspace 登录锁已移除：不再画 portal 门禁页，始终显示主界面
+        // if !self.portal.authorized {
+        //     self.draw_portal_gate(ctx);
+        //     crate::platform::sync_clipboard(ctx);
+        //     return;
+        // }
 
         // ── 顶栏 ────────────────────────────────────────────────
         egui::TopBottomPanel::top("top_bar")
@@ -472,19 +471,13 @@ impl App {
         app
     }
 
-    /// 功能任务：执行前先在线校验平台授权（/p/pass）。
+    /// 功能任务：（jsspace 登录锁已移除，直接执行，不再在线校验授权页）
     pub fn spawn_job<F>(&self, f: F)
     where
         F: FnOnce(Sender<String>) + Send + 'static,
     {
         let tx = self.tx.clone();
-        let device_id = self.identity.device_id.clone();
-        std::thread::spawn(move || match crate::portal::verify_saved(&device_id) {
-            Ok(_) => f(tx),
-            Err(e) => {
-                tx.send(format!("{PORTAL_FAIL}{e}")).ok();
-            }
-        });
+        std::thread::spawn(move || f(tx));
     }
 
     /// 不需要平台授权的启动/维护任务（更新检查、IP、登出、授权登录本身）。
