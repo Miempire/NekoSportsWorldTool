@@ -88,6 +88,32 @@ impl App {
                 self.log
                     .push(&format!("× 平台授权验证失败：{message}"));
                 self.portal.error = message;
+            } else if let Some(v) = msg.strip_prefix(super::unregister::UNREG_DONE) {
+                self.unreg_busy = false;
+                self.unregister_page.busy = false;
+                let val: serde_json::Value = serde_json::from_str(v).unwrap_or_default();
+                let ok = val.get("ok").and_then(|b| b.as_bool()).unwrap_or(false);
+                let kind = val.get("kind").and_then(|s| s.as_str()).unwrap_or("");
+                let text = val
+                    .get("message")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                self.unregister_page.message = Some((ok, text.clone()));
+                self.log.push(&format!("{} {text}", if ok { "√" } else { "×" }));
+                if ok {
+                    if kind == "delete" {
+                        self.session = None;
+                        self.unregister_page.armed = false;
+                        self.unregister_page.code.clear();
+                        self.status = "账号已注销，已退出登录".into();
+                    } else {
+                        self.unregister_page.sent = true;
+                        self.status = "验证码已发送".into();
+                    }
+                } else {
+                    self.status = text;
+                }
             } else if let Some(v) = msg.strip_prefix(IP) {
                 done_ip = Some(v.to_string());
             } else if msg == FENCE_DONE {

@@ -22,6 +22,7 @@ pub mod portal;
 pub mod records;
 pub mod run;
 pub mod theme;
+pub mod unregister;
 pub mod user;
 
 use crate::api::model::{self, Config, HeaderIdentity, Session};
@@ -81,6 +82,8 @@ pub struct App {
     pub records_busy: bool,
     pub data_busy: bool,
     pub user_busy: bool,
+    /// 强制注销流程（发码 / 注销）进行中。
+    pub unreg_busy: bool,
     pub status: String,
     pub popup: Option<PopupInfo>,
     pub ai_confirm: Option<ai::AiBatchPlan>,
@@ -91,6 +94,7 @@ pub struct App {
     pub records_page: records::RecordsPage,
     pub data_page: data::DataPage,
     pub user_page: user::UserPage,
+    pub unregister_page: unregister::UnregisterPage,
     pub device_page: device::DevicePage,
     pub update: about::UpdateUi,
     pub portal: portal::PortalUi,
@@ -326,6 +330,8 @@ impl eframe::App for App {
                 5 => self.draw_device(ui),
                 6 => self.log.render(ui),
                 7 => self.draw_osm_page(ui),
+                8 => self.draw_about(ui),
+                9 => self.draw_unregister(ui),
                 _ => self.draw_about(ui),
             }
         });
@@ -395,6 +401,7 @@ impl App {
             records_busy: false,
             data_busy: false,
             user_busy: false,
+            unreg_busy: false,
             status: "就绪".into(),
             popup: None,
             ai_confirm: None,
@@ -436,6 +443,7 @@ impl App {
             records_page: records::RecordsPage::default(),
             data_page: data::DataPage::default(),
             user_page: user::UserPage::default(),
+            unregister_page: unregister::UnregisterPage::default(),
             device_page: device::DevicePage::default(),
             update: about::UpdateUi::default(),
             portal,

@@ -7,6 +7,7 @@ use super::{
 use crate::api::model;
 use crate::track::generate_road::RouteMode;
 use crate::update::ReleaseInfo;
+use super::unregister::UNREG_DONE;
 
 impl App {
     /// 任一后台任务进行中（更新前的打断保护）。
@@ -17,6 +18,7 @@ impl App {
             || self.records_busy
             || self.data_busy
             || self.user_busy
+            || self.unreg_busy
     }
 
     /// 检查更新；manual=true 时切到关于页并显示状态。
@@ -259,6 +261,73 @@ impl App {
             }
         });
         self.status = "已登出".into();
+    }
+
+    /// 强制注销第 1 步：发送短信验证码（GT4 + /users/check/code，type=5）。
+    pub(crate) fn do_send_unregister_code(&mut self) {
+        if self.unreg_busy {
+            return;
+        }
+        let phone = self.unregister_page.phone.trim().to_string();
+        if phone.is_empty() {
+            self.unregister_page.message = Some((false, "请填写手机号".into()));
+            return;
+        }
+        self.unreg_busy = true;
+        self.unregister_page.busy = true;
+        self.unregister_page.message = None;
+        let identity = self.identity.clone();
+        self.spawn_job(move |tx| {
+            let mut log = App::logger(tx.clone());
+            let mut client = crate::api::client::ApiClient::new(identity, None);
+            let payload = match crate::api::account::send_ver_code(
+                &mut client,
+                &phone,
+                crate::api::account::VER_CODE_DELETE_USER,
+                &mut log,
+            ) {
+                Ok(_) => serde_json::json!({
+                    "ok": true, "kind": "code", "message": "验证码已发送"
+                }),
+                Err(e) => serde_json::json!({
+                    "ok": false, "kind": "code", "message": e
+                }),
+            };
+            tx.send(format!("{UNREG_DONE}{payload}")).ok();
+        });
+    }
+
+    /// 强制注销第 2 步：用短信验证码注销账号（不可逆）。
+    pub(crate) fn do_unregister_account(&mut self) {
+        if self.unreg_busy {
+            return;
+        }
+        let Some(session) = self.session.clone() else {
+            self.unregister_page.message = Some((false, "请先登录要注销的账号".into()));
+            return;
+        };
+        let code = self.unregister_page.code.trim().to_string();
+        if code.is_empty() {
+            self.unregister_page.message = Some((false, "请填写短信验证码".into()));
+            return;
+        }
+        self.unreg_busy = true;
+        self.unregister_page.busy = true;
+        self.unregister_page.message = None;
+        let identity = self.identity.clone();
+        self.spawn_job(move |tx| {
+            let mut log = App::logger(tx.clone());
+            let mut client = crate::api::client::ApiClient::new(identity, Some(session));
+            let payload = match crate::api::account::unregister(&mut client, &code) {
+                Ok(_) => serde_json::json!({
+                    "ok": true, "kind": "delete", "message": "账号已注销"
+                }),
+                Err(e) => serde_json::json!({
+                    "ok": false, "kind": "delete", "message": e
+                }),
+            };
+            tx.send(format!("{UNREG_DONE}{payload}")).ok();
+        });
     }
 
     pub fn refresh_ai_list(&mut self) {

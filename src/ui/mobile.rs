@@ -66,7 +66,7 @@ fn parse_f64_in_range(input: &str, range: RangeInclusive<f64>) -> Result<f64, St
 }
 
 pub fn tab_bar(ui: &mut egui::Ui, selected: &mut usize) -> Vec<egui::Response> {
-    const TABS: [&str; 9] = [
+    const TABS: [&str; 10] = [
         "跑步",
         "AI运动",
         "运动记录",
@@ -76,6 +76,7 @@ pub fn tab_bar(ui: &mut egui::Ui, selected: &mut usize) -> Vec<egui::Response> {
         "运行日志",
         "路网",
         "关于",
+        "注销",
     ];
     let compact = compact_ui(ui);
     let mut responses = Vec::with_capacity(TABS.len());
@@ -105,7 +106,8 @@ pub fn tab_bar(ui: &mut egui::Ui, selected: &mut usize) -> Vec<egui::Response> {
             }
         });
     } else {
-        ui.horizontal(|ui| {
+        // 10 个标签在窄桌面窗口会超宽，用换行排版保证不出界。
+        ui.horizontal_wrapped(|ui| {
             for (index, label) in TABS.into_iter().enumerate() {
                 let active = *selected == index;
                 let response = ui.add(super::theme::tab_button(active, label));
@@ -440,7 +442,7 @@ mod tests {
                 });
             });
 
-            assert_eq!(rects.len(), 9, "width={width}");
+            assert_eq!(rects.len(), 10, "width={width}");
             assert!(rects
                 .iter()
                 .all(|rect| rect.is_finite() && rect.width() > 0.0));
