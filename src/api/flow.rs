@@ -10,7 +10,9 @@ use super::submit::{submit_record, SubmitParams, SubmitResult};
 use crate::location::Coordinate;
 use crate::track::generate_road::RouteMode;
 use crate::track::generator::build as gen_track;
-use crate::track::wire::{build_obs_object, five_point_wrapper, obs_keys};
+use crate::track::wire::{
+    build_obs_object_with_area, five_point_wrapper_with_area, obs_keys,
+};
 use rand_distr::{Distribution, Normal};
 use serde_json::Value;
 
@@ -195,6 +197,8 @@ pub fn run_full_flow(
         .and_then(|(a, b)| crate::track::generator::speed_bounds_from_pace(a, b));
     // 随机 0-4 秒偏移（终端上报的 flag 与首点差 <5s），轨迹/提交/OBS/五点统一使用
     let start_ms = params.start_ms + (rand::random::<i64>() % 5) * 1000;
+    // 跑区元数据：由围栏接口返回（无围栏时保持默认自由跑口径）。
+    let mut area = crate::track::wire::RunAreaMeta::default();
     let mut track = match params.route_mode {
         RouteMode::Road => {
             let cfg = crate::api::model::load_config();
@@ -205,10 +209,11 @@ pub fn run_full_flow(
                     Ok(mut net) => {
                         crate::track::generate_road::align_network(&mut net);
                         // 电子围栏：裁剪到围栏内道路（失败/无围栏则跳过）
-                        let fences = match crate::api::fence::fetch_geo_fence(client) {
-                            Ok(f) => {
+                        let fences = match crate::api::fence::fetch_geo_fence_with_area(client) {
+                            Ok((f, a)) => {
                                 let _ = crate::api::model::save_fence_cache(&f);
                                 log(&format!("√ [track] 电子围栏 {} 个", f.len()));
+                                area = a;
                                 f
                             }
                             Err(e) => {
@@ -275,10 +280,11 @@ pub fn run_full_flow(
             }
             let mut net = crate::track::generate_road::load_network_path(&cfg.osm_path)?;
             crate::track::generate_road::align_network(&mut net);
-            let fences = match crate::api::fence::fetch_geo_fence(client) {
-                Ok(f) => {
+            let fences = match crate::api::fence::fetch_geo_fence_with_area(client) {
+                Ok((f, a)) => {
                     let _ = crate::api::model::save_fence_cache(&f);
                     log(&format!("√ [track] 电子围栏 {} 个", f.len()));
+                    area = a;
                     f
                 }
                 Err(e) => {
@@ -362,8 +368,8 @@ pub fn run_full_flow(
             .unwrap_or_default(),
     ));
 
-    // ④ 五点 wrapper（跑完态）
-    let five = five_point_wrapper(&pts, track.startTime);
+    // ④ 五点 wrapper（跑完态；校园跑带真实跑区）
+    let five = five_point_wrapper_with_area(&pts, track.startTime, &area);
     let _ = &five;
 
     // ⑤ 提交（sportType=1）
@@ -455,13 +461,14 @@ pub fn run_full_flow(
     // 从提交结果回填 track.startTime（含随机秒偏移），保证 body/OBS/flag 全链一致
     let mut track_for_obs = sp.track.clone();
     track_for_obs.startTime = result.start_ms;
-    let obj = build_obs_object(
+    let obj = build_obs_object_with_area(
         &track_for_obs,
         result.rrid,
         &result.uuid,
         sess.uid,
         &pts,
         &client.identity.platform,
+        &area,
     );
     let payload = obj.to_string().into_bytes();
     let keys = obs_keys(&track_for_obs, result.rrid, &result.uuid);

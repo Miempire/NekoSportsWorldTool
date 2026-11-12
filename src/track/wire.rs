@@ -74,6 +74,25 @@ pub fn conv_point(p: &GenPoint, start_ms: i64) -> Value {
     })
 }
 
+/// 跑区元数据：随围栏接口一起返回，提交体/OBS 的 `fixed_point_json` 三件套。
+/// 默认值 = 自由跑口径（无区域）。
+#[derive(Clone, Debug)]
+pub struct RunAreaMeta {
+    pub run_area_id: i64,
+    pub geo_fences: Vec<Value>,
+    pub freedom_show_fence: bool,
+}
+
+impl Default for RunAreaMeta {
+    fn default() -> Self {
+        Self {
+            run_area_id: -1,
+            geo_fences: Vec::new(),
+            freedom_show_fence: false,
+        }
+    }
+}
+
 /// 五点实体（实时点位 → 跑完态 isPass=true）。
 pub fn five_point_payload(points: &[Value], start_ms: i64) -> Vec<Value> {
     points
@@ -90,22 +109,31 @@ pub fn five_point_payload(points: &[Value], start_ms: i64) -> Vec<Value> {
                 "lat": p["lat"].as_f64().unwrap_or(0.0),
                 "lon": p["lon"].as_f64().unwrap_or(0.0),
                 "pointName": p["pointName"].as_str().unwrap_or(""),
-                "position": 999,
+                "position": i as i64,
                 "state": 0,
             })
         })
         .collect()
 }
 
-/// 提交 body 的 fivePointJson 包装串。
+/// 提交 body 的 fivePointJson 包装串（自由跑口径，无跑区）。
 pub fn five_point_wrapper(points: &[Value], start_ms: i64) -> String {
+    five_point_wrapper_with_area(points, start_ms, &RunAreaMeta::default())
+}
+
+/// 提交 body 的 fivePointJson 包装串（带真实跑区）。
+pub fn five_point_wrapper_with_area(
+    points: &[Value],
+    start_ms: i64,
+    area: &RunAreaMeta,
+) -> String {
     let five = five_point_payload(points, start_ms);
     json!({
         "useZip": false,
         "fivePointJson": Value::Array(five).to_string(),
-        "runAreaId": -1,
-        "geoFencesJson": "[]",
-        "freedomShowFence": false,
+        "runAreaId": area.run_area_id,
+        "geoFencesJson": Value::Array(area.geo_fences.clone()).to_string(),
+        "freedomShowFence": area.freedom_show_fence,
     })
     .to_string()
 }
@@ -351,9 +379,7 @@ fn build_laps(track: &Track, start_ms: i64, platform: &str) -> Vec<Value> {
     laps
 }
 
-/// 组装 11 键 OBS 对象（值均 gzip+base64；segment_json/runFaceCheck/extension_json 为空串 gzip）。
-/// 键序对齐真机 `o0OO00O` 的 Map.put 顺序。
-/// `platform` 决定 laps_json 的 avgPace 口径：iOS=秒/公里，Android=分钟/公里。
+/// 组装 11 键 OBS 对象（自由跑口径，无跑区）。
 pub fn build_obs_object(
     track: &Track,
     rrid: i64,
@@ -361,6 +387,30 @@ pub fn build_obs_object(
     uid: i64,
     live_points: &[Value],
     platform: &str,
+) -> Value {
+    build_obs_object_with_area(
+        track,
+        rrid,
+        uuid,
+        uid,
+        live_points,
+        platform,
+        &RunAreaMeta::default(),
+    )
+}
+
+/// 组装 11 键 OBS 对象（值均 gzip+base64；segment_json/runFaceCheck/extension_json 为空串 gzip）。
+/// 键序对齐真机 `o0OO00O` 的 Map.put 顺序。
+/// `platform` 决定 laps_json 的 avgPace 口径：iOS=秒/公里，Android=分钟/公里。
+/// `area` 来自围栏接口：校园跑必须带真实 `runAreaId/geoFencesJson/freedomShowFence`。
+pub fn build_obs_object_with_area(
+    track: &Track,
+    rrid: i64,
+    uuid: &str,
+    uid: i64,
+    live_points: &[Value],
+    platform: &str,
+    area: &RunAreaMeta,
 ) -> Value {
     let start_ms = track.startTime;
     let pts: Vec<Value> = track.locations.iter().map(|p| conv_point(p, start_ms)).collect();
@@ -370,9 +420,9 @@ pub fn build_obs_object(
     let five = five_point_payload(live_points, start_ms);
     let fx = json!({
         "fivePointJson": Value::Array(five).to_string(),
-        "freedomShowFence": false,
-        "geoFencesJson": "[]",
-        "runAreaId": -1,
+        "freedomShowFence": area.freedom_show_fence,
+        "geoFencesJson": Value::Array(area.geo_fences.clone()).to_string(),
+        "runAreaId": area.run_area_id,
         "useZip": false,
     });
     json!({

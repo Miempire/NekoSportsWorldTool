@@ -6,20 +6,36 @@
 
 use super::client::{get_field, ApiClient};
 use crate::track::geom::gcj02_to_bd09;
+use crate::track::wire::RunAreaMeta;
 use serde_json::{json, Value};
 
 pub const FENCE_PATH: &str = "/api/v1/getGeoFenceForRun";
 
 /// 拉取围栏多边形列表（每个围栏一个闭合环，(lat, lon)，BD-09）。
 pub fn fetch_geo_fence(client: &mut ApiClient) -> Result<Vec<Vec<(f64, f64)>>, String> {
+    fetch_geo_fence_with_area(client).map(|(fences, _)| fences)
+}
+
+/// 拉取围栏 + 跑区元数据（`runAreaId/geoFences/freedomShowFence`）。
+/// 校园跑必须把 area 带进提交体与 OBS 的 `fixed_point_json`，否则服务端关联不到点位配置。
+pub fn fetch_geo_fence_with_area(
+    client: &mut ApiClient,
+) -> Result<(Vec<Vec<(f64, f64)>>, RunAreaMeta), String> {
     let body = json!({ "geoFenceUpdateTime": 0 }).to_string();
     let biz = client.call("POST", FENCE_PATH, &body, &[])?;
+    let area_id = get_field(&biz, "runAreaId")
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+        })
+        .unwrap_or(-1);
     let fences = get_field(&biz, "geoFences")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
 
     let mut out: Vec<Vec<(f64, f64)>> = Vec::new();
+    let mut normalized: Vec<Value> = Vec::new();
     for f in fences {
         let Some(pts) = f.get("points").and_then(|v| v.as_array()) else {
             continue;
@@ -31,9 +47,15 @@ pub fn fetch_geo_fence(client: &mut ApiClient) -> Result<Vec<Vec<(f64, f64)>>, S
             .collect();
         if ring.len() >= 3 {
             out.push(ring);
+            normalized.push(f.clone());
         }
     }
-    Ok(out)
+    let area = RunAreaMeta {
+        run_area_id: area_id,
+        freedom_show_fence: !normalized.is_empty(),
+        geo_fences: normalized,
+    };
+    Ok((out, area))
 }
 
 /// 取一个点的 (lat, lon)（BD-09）。优先 lat/lon，缺失或全 0 时回退 glat/glon（GCJ→BD）。
