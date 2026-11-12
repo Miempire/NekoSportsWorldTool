@@ -319,7 +319,7 @@ mod tests {
         }
     }
 
-    /// OBS 对象：10 键、gzip+base64 可解、run_data 27 键点集。
+    /// OBS 对象：11 键、gzip+base64 可解、run_data 27 键点集、单 objectKey。
     #[test]
     fn test_obs_object_structure() {
         let pts: Vec<serde_json::Value> = sample_points()
@@ -354,15 +354,16 @@ mod tests {
             keys,
             vec![
                 "rrid",
-                "uuid",
                 "uid",
+                "uuid",
                 "run_data",
-                "fixed_point_json",
-                "segment_json",
-                "speed_json",
                 "step_freq_json",
-                "laps_json",
-                "runFaceCheck"
+                "speed_json",
+                "segment_json",
+                "fixed_point_json",
+                "runFaceCheck",
+                "extension_json",
+                "laps_json"
             ]
         );
         // rrid gzip 可解
@@ -389,10 +390,10 @@ mod tests {
         let mut s = String::new();
         dec.read_to_string(&mut s).unwrap();
         assert_eq!(s, "");
-        // obs keys 两个
+        // obs key 只有一个（官方口径），北京时间目录
         let ks = obs_keys(&track, 1320403809, "UUID-TEST");
-        assert_eq!(ks.len(), 2);
-        assert!(ks[0].contains("run_data/"));
-        assert!(ks[1].starts_with("run_data/1320/1320403809.json"));
+        assert_eq!(ks.len(), 1);
+        assert!(ks[0].starts_with("run_data/"));
+        assert!(ks[0].ends_with("/UUID-TEST.json"));
     }
 }

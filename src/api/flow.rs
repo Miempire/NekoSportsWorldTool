@@ -450,8 +450,8 @@ pub fn run_full_flow(
         }
     }
 
-    // ⑥ OBS 上传（双 key）
-    log("[obs] 上传 OBS 对象（gzip+base64，10 键）…");
+    // ⑥ OBS 上传（官方只 PUT 一个 key）
+    log("[obs] 上传 OBS 对象（gzip+base64，11 键）…");
     // 从提交结果回填 track.startTime（含随机秒偏移），保证 body/OBS/flag 全链一致
     let mut track_for_obs = sp.track.clone();
     track_for_obs.startTime = result.start_ms;
@@ -466,10 +466,10 @@ pub fn run_full_flow(
     let payload = obj.to_string().into_bytes();
     let keys = obs_keys(&track_for_obs, result.rrid, &result.uuid);
     let obs_ok = super::obs::upload_both_keys(client, &keys, &payload, log);
-    if obs_ok == 2 {
-        log("√ [obs] 双 key 上传成功");
+    if obs_ok == keys.len() {
+        log("√ [obs] OBS 上传成功");
     } else {
-        log(&format!("⚠ [obs] 上传成功 {obs_ok}/2"));
+        log(&format!("⚠ [obs] 上传成功 {obs_ok}/{}", keys.len()));
     }
 
     // ⑦ 详情验证

@@ -235,3 +235,12 @@ pub fn fmt_gain_time(ms: i64) -> String {
         .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
         .unwrap_or_default()
 }
+
+/// 北京时间（UTC+8）格式化。OBS objectKey 等对时区敏感的字段必须用它，
+/// 不能依赖运行机器的本地时区（`Local`）。
+pub fn fmt_cst(ms: i64, fmt: &str) -> String {
+    chrono::FixedOffset::east_opt(8 * 3600)
+        .and_then(|tz| tz.timestamp_millis_opt(ms).single())
+        .map(|t| t.format(fmt).to_string())
+        .unwrap_or_default()
+}

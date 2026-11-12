@@ -6,12 +6,18 @@ use serde_json::{json, Value};
 pub const OBS_SIGN_PATH: &str = "/api/obs/temporary/url";
 
 /// 换取签名 URL。
+/// 注意：`contentType` 会进 OBS 签名——官方 Put 用 `text/plain`，Get 用 `application/json`。
 pub fn sign_url(client: &mut ApiClient, method: &str, key: &str) -> Result<String, String> {
+    let content_type = if method.eq_ignore_ascii_case("put") {
+        "text/plain"
+    } else {
+        "application/json"
+    };
     let body = json!({
         "bucketName": "iydsj-hbase-hot",
         "objectKey": key,
         "method": method,
-        "contentType": "application/json",
+        "contentType": content_type,
     })
     .to_string();
     let biz = client.call("POST", OBS_SIGN_PATH, &body, &[])?;
@@ -25,12 +31,12 @@ pub fn sign_url(client: &mut ApiClient, method: &str, key: &str) -> Result<Strin
     Ok(signed.to_string())
 }
 
-/// PUT 上传 OBS 对象。
+/// PUT 上传 OBS 对象（Content-Type 必须与签名时一致：text/plain）。
 pub fn put_object(signed_url: &str, payload: &[u8], log: &mut dyn FnMut(&str)) -> Result<(), String> {
     let agent = super::client::make_agent();
     let resp = agent
         .put(signed_url)
-        .set("Content-Type", "application/json")
+        .set("Content-Type", "text/plain")
         .send_bytes(payload)
         .map_err(super::client::ureq_err)?;
     log(&format!("[obs] PUT {} -> {}", shorten(signed_url), resp.status()));

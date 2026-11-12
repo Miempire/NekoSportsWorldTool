@@ -1,10 +1,9 @@
 //! OBS 对象组装。
 //!
-//! 10 键对象，每值 gzip+base64；BD→GCJ 单次转换；27 键协议点集；
+//! 11 键对象，每值 gzip+base64；BD→GCJ 单次转换；27 键协议点集；
 //! 10s 窗（speed/step_freq）；每 1000m 一圈；五点 fixed_point_json。
 #![allow(non_snake_case)]
 
-use chrono::{Local, TimeZone};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use serde_json::{json, Value};
@@ -352,7 +351,8 @@ fn build_laps(track: &Track, start_ms: i64, platform: &str) -> Vec<Value> {
     laps
 }
 
-/// 组装 10 键 OBS 对象（值均 gzip+base64；segment_json/runFaceCheck 为空串 gzip）。
+/// 组装 11 键 OBS 对象（值均 gzip+base64；segment_json/runFaceCheck/extension_json 为空串 gzip）。
+/// 键序对齐真机 `o0OO00O` 的 Map.put 顺序。
 /// `platform` 决定 laps_json 的 avgPace 口径：iOS=秒/公里，Android=分钟/公里。
 pub fn build_obs_object(
     track: &Track,
@@ -377,27 +377,22 @@ pub fn build_obs_object(
     });
     json!({
         "rrid": gz_str(&rrid.to_string()),
-        "uuid": gz_str(uuid),
         "uid": gz_str(&uid.to_string()),
+        "uuid": gz_str(uuid),
         "run_data": gz_json(&run_wrap),
-        "fixed_point_json": gz_json(&fx),
-        "segment_json": gz_str(""),
-        "speed_json": gz_json(&Value::Array(sp)),
         "step_freq_json": gz_json(&Value::Array(stf)),
-        "laps_json": gz_json(&Value::Array(laps)),
+        "speed_json": gz_json(&Value::Array(sp)),
+        "segment_json": gz_str(""),
+        "fixed_point_json": gz_json(&fx),
         "runFaceCheck": gz_str(""),
+        "extension_json": gz_str(""),
+        "laps_json": gz_json(&Value::Array(laps)),
     })
 }
 
-/// OBS objectKey（两个都要传）。
-pub fn obs_keys(track: &Track, rrid: i64, uuid: &str) -> Vec<String> {
-    let t0 = Local
-        .timestamp_millis_opt(track.startTime)
-        .single()
-        .map(|t| t.format("%Y%m%d%H").to_string())
-        .unwrap_or_default();
-    vec![
-        format!("run_data/{t0}/{uuid}.json"),
-        format!("run_data/{}/{}.json", rrid / 1000000, rrid),
-    ]
+/// 官方 objectKey 只有一个：`<type>/<北京时间 YYYYMMDDHH>/<uuid>.json`。
+/// 真机只 PUT 这个 key（不存在 rrid 兜底 key）。
+pub fn obs_keys(track: &Track, _rrid: i64, uuid: &str) -> Vec<String> {
+    let t0 = super::geom::fmt_cst(track.startTime, "%Y%m%d%H");
+    vec![format!("run_data/{t0}/{uuid}.json")]
 }
