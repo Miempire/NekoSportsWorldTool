@@ -2262,7 +2262,7 @@ dependencies = [
 
 [[package]]
 name = "miempires-run-tool"
-version = "1.4.2"
+version = "1.4.3"
 dependencies = [
  "aes",
  "android-activity",
