@@ -383,13 +383,15 @@ mod tests {
         let pts: Vec<serde_json::Value> =
             serde_json::from_str(wrap["allLocJson"].as_str().unwrap()).unwrap();
         assert_eq!(pts[0].as_object().unwrap().len(), 27, "点键数必须 27");
-        // segment_json 是空串 gzip
+        // segment_json 是 11 键分段的 gzip 数组
         let raw =
             crate::crypto::envelope::b64_decode(obj["segment_json"].as_str().unwrap()).unwrap();
         let mut dec = flate2::read::GzDecoder::new(&raw[..]);
         let mut s = String::new();
         dec.read_to_string(&mut s).unwrap();
-        assert_eq!(s, "");
+        let segs: Vec<serde_json::Value> = serde_json::from_str(&s).unwrap();
+        assert!(!segs.is_empty(), "segment_json 不能为空");
+        assert_eq!(segs[0].as_object().unwrap().len(), 11, "分段键数必须 11");
         // obs key 只有一个（官方口径），北京时间目录
         let ks = obs_keys(&track, 1320403809, "UUID-TEST");
         assert_eq!(ks.len(), 1);
