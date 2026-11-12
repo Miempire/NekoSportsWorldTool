@@ -93,19 +93,47 @@ impl Default for RunAreaMeta {
     }
 }
 
-/// 五点实体（实时点位 → 跑完态 isPass=true）。
-pub fn five_point_payload(points: &[Value], start_ms: i64) -> Vec<Value> {
+/// 点位是否被轨迹真实经过（40m 吸附容差，官方按轨迹复核 isPass）。
+fn point_passed(p: &Value, track: &Track, tol_m: f64) -> bool {
+    let lat = p["lat"].as_f64().unwrap_or(0.0);
+    let lon = p["lon"].as_f64().unwrap_or(0.0);
+    // 五个点可能只填 GCJ（glat/glon），BD 为 0 时回退。
+    let (plat, plng) = if lat == 0.0 && lon == 0.0 {
+        (
+            p["glat"].as_f64().unwrap_or(0.0),
+            p["glon"].as_f64().unwrap_or(0.0),
+        )
+    } else {
+        (lat, lon)
+    };
+    if plat == 0.0 && plng == 0.0 {
+        return false;
+    }
+    track.locations.iter().any(|l| {
+        let dy = (l.gLat - plat) * super::geom::MET_PER_DEG_LAT;
+        let dx = (l.gLng - plng) * super::geom::MET_PER_DEG_LNG;
+        dx * dx + dy * dy <= tol_m * tol_m
+    })
+}
+
+/// 五点实体（实时点位 → 跑完态；`isPass` 按 40m 吸附真实判定）。
+pub fn five_point_payload(
+    points: &[Value],
+    start_ms: i64,
+    track: Option<&Track>,
+) -> Vec<Value> {
     points
         .iter()
         .enumerate()
         .map(|(i, p)| {
+            let passed = track.map_or(true, |t| point_passed(p, t, 40.0));
             json!({
                 "flag": start_ms,
                 "glat": p["glat"].as_f64().unwrap_or(0.0),
                 "glon": p["glon"].as_f64().unwrap_or(0.0),
                 "id": i as i64 + 1,
                 "isFixed": p["isFixed"].as_i64().unwrap_or(0),
-                "isPass": true,
+                "isPass": passed,
                 "lat": p["lat"].as_f64().unwrap_or(0.0),
                 "lon": p["lon"].as_f64().unwrap_or(0.0),
                 "pointName": p["pointName"].as_str().unwrap_or(""),
@@ -118,16 +146,17 @@ pub fn five_point_payload(points: &[Value], start_ms: i64) -> Vec<Value> {
 
 /// 提交 body 的 fivePointJson 包装串（自由跑口径，无跑区）。
 pub fn five_point_wrapper(points: &[Value], start_ms: i64) -> String {
-    five_point_wrapper_with_area(points, start_ms, &RunAreaMeta::default())
+    five_point_wrapper_with_area(points, start_ms, &RunAreaMeta::default(), None)
 }
 
-/// 提交 body 的 fivePointJson 包装串（带真实跑区）。
+/// 提交 body 的 fivePointJson 包装串（带真实跑区 + 轨迹用于 isPass 判定）。
 pub fn five_point_wrapper_with_area(
     points: &[Value],
     start_ms: i64,
     area: &RunAreaMeta,
+    track: Option<&Track>,
 ) -> String {
-    let five = five_point_payload(points, start_ms);
+    let five = five_point_payload(points, start_ms, track);
     json!({
         "useZip": false,
         "fivePointJson": Value::Array(five).to_string(),
@@ -417,7 +446,8 @@ pub fn build_obs_object_with_area(
     let run_wrap = json!({ "allLocJson": Value::Array(pts).to_string(), "useZip": false });
     let (sp, stf) = build_windows(track, rrid);
     let laps = build_laps(track, start_ms, platform);
-    let five = five_point_payload(live_points, start_ms);
+    let segs = build_segments(track, start_ms);
+    let five = five_point_payload(live_points, start_ms, Some(track));
     let fx = json!({
         "fivePointJson": Value::Array(five).to_string(),
         "freedomShowFence": area.freedom_show_fence,
@@ -432,7 +462,7 @@ pub fn build_obs_object_with_area(
         "run_data": gz_json(&run_wrap),
         "step_freq_json": gz_json(&Value::Array(stf)),
         "speed_json": gz_json(&Value::Array(sp)),
-        "segment_json": gz_str(""),
+        "segment_json": gz_json(&Value::Array(segs)),
         "fixed_point_json": gz_json(&fx),
         "runFaceCheck": gz_str(""),
         "extension_json": gz_str(""),
@@ -440,9 +470,78 @@ pub fn build_obs_object_with_area(
     })
 }
 
+/// 分段（真机 `AnalysisStateDB` 11 字段）：按公里切，`avgSpeed` 是配速（分/公里）。
+fn build_segments(track: &Track, start_ms: i64) -> Vec<Value> {
+    let locs = &track.locations;
+    let Some(last) = locs.last() else {
+        return Vec::new();
+    };
+    let total = last.totalDis;
+    let mut out = Vec::new();
+    let (mut start_d, mut start_t, mut start_steps) = (0.0f64, 0i64, 0i64);
+    let mut id = 1i64;
+    while start_d < total - 1e-9 {
+        let end_d = (start_d + 1000.0).min(total);
+        // 在采样点之间线性插值出该距离处的累计时间/步数
+        let mut end_t = last.totalTime;
+        let mut end_steps = last.steps;
+        for pair in locs.windows(2) {
+            let (a, b) = (&pair[0], &pair[1]);
+            if b.totalDis >= end_d && b.totalDis > a.totalDis {
+                let k = (end_d - a.totalDis) / (b.totalDis - a.totalDis);
+                end_t = (a.totalTime as f64 + (b.totalTime - a.totalTime) as f64 * k).round() as i64;
+                end_steps = (a.steps as f64 + (b.steps - a.steps) as f64 * k).round() as i64;
+                break;
+            }
+        }
+        let dist = (end_d - start_d).max(0.0);
+        let dur = (end_t - start_t).max(1);
+        let steps = (end_steps - start_steps).max(0);
+        let pace = (dur as f64 / 60.0) / (dist / 1000.0).max(0.001);
+        out.push(json!({
+            "avgSpeed": round_to(pace, 2),
+            "avgStep": steps,
+            "distance": round_to(dist, 2),
+            "endTime": start_ms + end_t * 1000,
+            "flag": start_ms,
+            "id": id,
+            "intervalStepModel": 0,
+            "originAvgStep": steps,
+            "speedStandard": 0,
+            "startTime": start_ms + start_t * 1000,
+            "state": 1,
+        }));
+        start_d = end_d;
+        start_t = end_t;
+        start_steps = end_steps;
+        id += 1;
+    }
+    out
+}
+
+/// OBS 对象类型：户外 `run_data` / 室内 `indoor_json`。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObsKind {
+    Outdoor,
+    Indoor,
+}
+
+impl ObsKind {
+    fn prefix(self) -> &'static str {
+        match self {
+            ObsKind::Outdoor => "run_data",
+            ObsKind::Indoor => "indoor_json",
+        }
+    }
+}
+
 /// 官方 objectKey 只有一个：`<type>/<北京时间 YYYYMMDDHH>/<uuid>.json`。
 /// 真机只 PUT 这个 key（不存在 rrid 兜底 key）。
-pub fn obs_keys(track: &Track, _rrid: i64, uuid: &str) -> Vec<String> {
+pub fn obs_keys_kind(track: &Track, _rrid: i64, uuid: &str, kind: ObsKind) -> Vec<String> {
     let t0 = super::geom::fmt_cst(track.startTime, "%Y%m%d%H");
-    vec![format!("run_data/{t0}/{uuid}.json")]
+    vec![format!("{}/{t0}/{uuid}.json", kind.prefix())]
+}
+
+pub fn obs_keys(track: &Track, rrid: i64, uuid: &str) -> Vec<String> {
+    obs_keys_kind(track, rrid, uuid, ObsKind::Outdoor)
 }

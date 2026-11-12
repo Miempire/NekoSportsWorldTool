@@ -369,7 +369,7 @@ pub fn run_full_flow(
     ));
 
     // ④ 五点 wrapper（跑完态；校园跑带真实跑区）
-    let five = five_point_wrapper_with_area(&pts, track.startTime, &area);
+    let five = five_point_wrapper_with_area(&pts, track.startTime, &area, Some(&track));
     let _ = &five;
 
     // ⑤ 提交（sportType=1）
