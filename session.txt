@@ -1,0 +1,488 @@
+========================================================================
+ Miempire's RUN TOOL —— Agent 交接 / 约束文书（session.txt）
+ 版本：2026-11-12（对应 main 32a2c2b / client 3973b72）
+========================================================================
+
+本文件写给"接手的下一个 agent"。
+目的：在没有历史对话的情况下，也能安全地改代码、不踩已知的坑。
+
+阅读顺序建议：§0 硬规则 → §1 项目边界 → §2 仓库与环境
+              → §5 协议速查 → §12 已知未验证 → §13 错误清单
+              → §14 验证与提交 → §16 交接检查单
+
+
+========================================================================
+§0 给 agent 的硬规则（先读这一节，违反即回滚）
+========================================================================
+
+R0.1 先读后改：改任何文件前先用 read 工具读目标区域；不要凭记忆重写整文件。
+R0.2 最小改动：一次提交只解决一件事；不要顺手格式化、重排、重命名。
+R0.3 不猜字段：协议字段的取值/单位/顺序，凡本文没写、代码里也没注释的，
+     一律标"未验证"，不要臆造，更不要写进提交体。
+R0.4 不伪造证据：不要编造"真机抓包显示……"。没有样本就写"无样本"。
+R0.5 不动常量：签名盐、appVersion、路径版本号（v70xxx）、bucket 名，
+     改动必须给出证据与影响面，并在提交信息里写明。
+R0.6 不删测试：测试失败先判断是断言过时还是代码错；断言过时改断言，
+     并在提交信息里说明"测试随协议更新"。
+R0.7 不 force push、不改写历史、不删除分支。
+R0.8 不提交本地资料：apis.doc / apis.files / apis.md / .trae/ / 抓包原文
+     / identity*.json / session.json 一律不入库（已在 .gitignore）。
+R0.9 提交后必须看 CI：main 仓库 CI 要三平台过；client 仓库 APK 构建要过。
+     失败先修，不要带着红叉继续叠加提交。
+R0.10 拿不准就问：宁可停下来问用户，也不要"猜一个值先跑"。
+
+
+========================================================================
+§1 项目边界
+========================================================================
+
+1.1 这是"运动世界校园版"（SWCampus）协议的**自有账号/自有设备**兼容性工具，
+    用于研究自己的账号为什么跑不了、轨迹为什么被判灰。
+1.2 不分发原始 APK、不内置他人的账号、不提供绕过人机验证的成品。
+1.3 逆向材料（neko-re-sources）只读：不要修改、不要把它整包拷进仓库。
+1.4 任何"提高通过率"的改动都应优先来自**协议一致性**，而不是伪造字段。
+
+
+========================================================================
+§2 仓库、路径、构建环境
+========================================================================
+
+2.1 主仓库（GUI + CLI，全平台）
+    E:\下载\NekoSportsWorldTool-main
+    remote: git@github.com:Miempire/NekoSportsWorldTool.git
+    branch: main
+    结构: src/{api,crypto,track,ui,cli,config,soft,...} + crates/route-planner
+
+2.2 客户端仓库（client，带配速/海拔曲线、Android 发布）
+    D:\client
+    remote: git@github.com:Miempire/MiempiresRunTool.git
+    branch: main
+    结构: src/{api,crypto,track,ui,config,soft} + crates/ + android/
+    注意: client 的 src/api/submit.rs 与主仓库逐字节一致；
+          src/track/wire.rs / fence.rs / obs.rs / flow.rs 也已对齐，
+          但 client 多了 curve（pace/altitude）能力，flow.rs 参数更多。
+
+2.3 旧快照（不要当运行副本）
+    E:\下载\Niko源码\NekoSportsWorldTool-main（无 .git，协议更老：
+    28 键点集含 steps、双 objectKey、position=999、isPass 恒 true）
+
+2.4 逆向资料（只读、权威）
+    E:\下载\neko-re-sources-v0.6.32
+      docs/contract/PROTOCOL.md              协议契约（必读）
+      docs/research/REAL-CAPTURE-7393.md     7.3.93 真机抓包摘要
+      docs/research/ALIGN-7393-AUDIT.md      逐字段对齐审计
+      docs/research/APP-NETWORK-MAP.md       端点/对象/字段地图
+      native/reimpl-rust/sign.rs             签名参考实现（逐字段）
+      java/jadx-7.4.0/                       反编译 Java（7.4.0）
+
+2.5 本机环境
+    - 没有 cargo / rustc（已按用户要求移除，勿擅自重装）。
+    - 编译验证只能靠 GitHub Actions：
+        main   → CI（三平台 cargo check + cargo test）+ APK
+        client → APK（Android 交叉编译，等于 lib 编译检查）
+    - 本地可用：git、python(Pillow/opencv)、PowerShell、curl。
+
+
+========================================================================
+§3 分层与请求链路
+========================================================================
+
+HTTP 头（UA / appVersion / headerSign）
+  └ body：信封（加密容器 + 校验字段）
+      └ 容器内明文：业务 data + 会话密钥材料
+          └ 业务 JSON（login / policy / points / submit / ...）
+  └ 附属上传：OBS 预签名 URL → PUT gzip 对象（轨迹明细）
+
+实现位置（两个仓库同名）：
+  src/crypto/envelope.rs   请求信封（明文入、信封出）
+  src/crypto/decrypt.rs    响应解密（{r,s,v}）
+  src/crypto/header.rs     请求头（Android 23 键 / iOS 版）
+  src/crypto/sign.rs       提交签名（31 字段）
+  src/api/client.rs        调用封装（call / call_host）
+  src/api/obs.rs           OBS 换签 + PUT
+  src/track/wire.rs        OBS 对象与五点 JSON 组装
+
+
+========================================================================
+§4 端点速查（版本号随 App 升级会变，升级先核这里）
+========================================================================
+
+POST /api/v70100/login                     账号密码登录
+POST /api/v70270/security/geevalidate      提交滑块凭证
+POST /api/v65/security/checkGeeUse         是否需要人机验证
+POST /api/v70103/runModePolicy             跑步策略（距离/时长/配速窗口/区域/围栏）
+POST /api/v59/indoorRunModePolicy          室内跑策略
+GET  /api/v560/get/1/distance/1            服务器时间/距离基准
+POST /api/v1/getGeoFenceForRun             电子围栏 + runAreaId（可缺省）
+POST /api/v70230/runnings/records          记录列表
+POST /api/v70320/runnings/get_one_record   单条记录详情
+POST /api/v70260/runnings/save/record      提交跑步记录
+POST /api/v68/indoor/save/record           室内记录提交（本工具尚未接线）
+POST /api/v78/cheat/cheatlist              违规自查
+POST /api/obs/temporary/url                换 OBS 预签名 URL
+POST /api/v1/obs/error                     OBS 失败上报（默认不发）
+
+
+========================================================================
+§5 请求头（Android 真机 23 键，全部是"字符串"值）
+========================================================================
+
+顺序与真机插入序一致：
+  Accept, Content-Type, appVersion, osType, osVersion, DeviceId,
+  deviceName, cpuModel, logicPixel, physicPixel, isRoot, IMEI,
+  androidId, blMac, wifiMac, CustomDeviceId, appInstallTime,
+  appUpdateTime, uid, nonce, timeStamp, token, tokenSign
+
+关键口径：
+  osType            = "0"（Android）
+  appVersion        = 与 UA、headerSign 内版本三者必须一致
+  DeviceId          = 32 位 hex 小写、无连字符；UUID 去连字符即可，
+                      非 hex 的持久值用 MD5 派生（跨请求稳定）
+  logicPixel        = physicPixel / 3，例如 400x805 / 1200x2416
+  isRoot            = "0"/"1" 字符串，不是 bool
+  IMEI/androidId/blMac/wifiMac/CustomDeviceId = 空串（真机权限受限）
+  appInstallTime    = 稳定值；appUpdateTime = install + 26.8 天
+  uid/timeStamp     = 数字的字符串形式
+  nonce             = 32 位小写 UUID 文本
+  tokenSign         = MD5(排序后的 token 参数 + 固定后缀)
+
+iOS 头：**没有真机样本**，当前实现保留 iOS 形态（大写 UUID、bool isRoot、
+CustomDeviceId 带后缀、360x640）。不要用 Android 口径去"修正"它，
+也不要声称它已验证。
+
+
+========================================================================
+§6 提交体（save/record）：45 键，其中 31 键参与签名
+========================================================================
+
+6.1 固定值（真机 7.3.93 抓包）
+  sportType   = 1（校园/积分跑；4=户外自由跑，5=室内）
+  roomId      = 0（非房间跑；签名只在 sportType=3 时纳入 roomId）
+  latitude    = 0.0        ← 不是起点坐标
+  longitude   = 0.0
+  more        = true
+  goalId      = 0
+  themeId     = -1
+  complete    = 由是否达标决定
+  status      = 0
+  isUpload    = false
+  unauthorized= 0
+  useMobilityTools = 0
+  faceCheck   = 0
+  segmentJson = ""          ← 提交体为空，真实分段在 OBS
+  allLocJson  = ""          ← 提交体为空，真实点位在 OBS
+  speedPerTenSec  = []      ← 提交体为空数组
+  stepsPerTenSec  = []      ← 提交体为空数组
+
+6.2 计算值
+  totalTime   = 秒
+  totalDis / validDis = **截断**取整（93.90 → 93），不是四舍五入
+  speed       = 配速(分/公里) × 1000（Android/iOS 一致）
+  avgStepFreq = totalSteps / totalTime × 60，最小 1
+  stopTime    = startTime + totalTime×1000 + 1~5s 暂停抖动（uuid 派生，稳定）
+  startTime   = 计划起点（可被 0~4s 随机偏移）
+  signature / originalSign = 见 §7
+
+6.3 序列化顺序
+  真机 UploadFormatEntity 字段声明是字母序，Gson 按声明序输出。
+  本工具用 sorted_body_json() 按 key 排序后进信封，保持一致。
+  签名与 JSON 文本顺序无关（sign.rs 内部自行排序）。
+
+6.4 JSON 类型
+  数字字段不要写成字符串；bool 字段不要写成 "true"。
+  goalId 是整数 0（不是 null）。
+
+
+========================================================================
+§7 签名（31 字段，权威参考 neko-re-sources/native/reimpl-rust/sign.rs）
+========================================================================
+
+盐：2slhe02lsfiwowlcixisla_sls-_slaor
+
+字段顺序（UploadSignEntity 声明序）：
+  sportType, totalTime, totalDis, speed, startTime, stopTime, complete,
+  selDistance, unCompleteReason, getPrize, status, uuid, uid, avgStepFreq,
+  totalSteps, selectedUnid, calorie, policy, selRunTime, validDis, validTime,
+  useMobilityTools, errorCode, geeToken, unauthorized, themeId, faceCheck,
+  goalId, address, avgPower, totalAscent
+  （sportType=3 时追加 roomId）
+
+取值字符串化：
+  String → 原值；null → "null"；bool → "true"/"false"；数字 → to_string
+
+两种拼法：
+  originalSign = 31 项按 key **自然序**拼 "k=v&k=v…"（无 MD5、无盐）
+  signature    = 同一批项按 key **忽略大小写排序**拼接 + 盐，再 MD5
+
+常见错误：
+  - 用 JSON 序列化顺序去签名（错，必须排序）
+  - 把 goalId=0 写成 null 或反之（会改签名串）
+  - 忘记 roomId 只在 sportType=3 时参与
+
+
+========================================================================
+§8 五点（fivePointJson）
+========================================================================
+
+规则：
+  isFixed  = 原样透传点位接口（硬点 1 / 普通点 0），不要按模式改写
+  isPass   = 按轨迹是否真实经过判定（40m 吸附容差），**禁止全 true 兜底**
+  position = 数组下标，0 起
+  flag     = 会话起始毫秒时间戳（与 startTime 同源），不是每点时间
+  id       = i+1
+  外层包装：
+    {"useZip":false, "fivePointJson":"[...]", "runAreaId":…,
+     "geoFencesJson":"[...]", "freedomShowFence":…}
+
+isPass 实现：track::wire::point_passed()，遍历 track.locations，
+用 BD 坐标做平面距离（MET_PER_DEG_LAT/LNG），≤40m 视为经过；
+点位只有 glat/glon 时回退用 GCJ。
+
+跑区三件套来源：围栏接口（fetch_geo_fence_with_area）
+  runAreaId       = data.runAreaId（缺省 -1）
+  geoFencesJson   = data.geoFences 的数组 JSON 字符串
+  freedomShowFence= 围栏列表非空
+  围栏接口失败时回落缓存/默认值（-1、[]、false），日志会提示"回退缓存"。
+
+
+========================================================================
+§9 OBS 对象（11 键，每个值 gzip + Base64 标准表）
+========================================================================
+
+键序（真机 Map.put 序）：
+  rrid, uid, uuid, run_data, step_freq_json, speed_json, segment_json,
+  fixed_point_json, runFaceCheck, extension_json, laps_json
+
+取值：
+  rrid/uid/uuid        数字或 uuid 的字符串，gzip
+  run_data             gzip({"allLocJson":"<点数组 JSON 字符串>","useZip":false})
+  step_freq_json       gzip(数组)
+  speed_json           gzip(数组)
+  segment_json         gzip(11 键分段数组)
+  fixed_point_json     gzip({fivePointJson, freedomShowFence, geoFencesJson,
+                            runAreaId, useZip})
+  runFaceCheck         gzip("")
+  extension_json       gzip("")
+  laps_json            gzip(数组)
+
+objectKey（**只传一个**）：
+  run_data/<北京时间 YYYYMMDDHH>/<uuid>.json     ← 户外
+  indoor_json/<北京时间 YYYYMMDDHH>/<uuid>.json  ← 室内（wire::ObsKind::Indoor）
+  时间必须用 geom::fmt_cst（UTC+8），不要用 Local。
+
+换签 / 上传：
+  POST /api/obs/temporary/url
+    {"bucketName":"iydsj-hbase-hot","objectKey":key,"method":"Put",
+     "contentType":"text/plain"}
+  PUT 时 Content-Type 必须是 text/plain（会进签名，写错 403）
+  Get 场景 contentType 用 application/json
+
+run_data 单点 27 键：
+  avgSpeed,bdA,bdD,bdG,bdS,coorType,count,dtr,flag,gLat,gLng,gainTime,id,
+  lat,lng,locType,locationId,queueNum,radius,speed,state,stepDistance,
+  totalDis,totalTime,type,validDis,validTime
+  （注意：**没有 steps**；带 steps 的 28 键是旧口径，错误）
+
+segment_json 单段 11 键（真机 AnalysisStateDB）：
+  avgSpeed（配速 分/公里）, avgStep, distance, endTime, flag, id,
+  intervalStepModel, originAvgStep, speedStandard, startTime, state
+  当前实现：按 1000m 切分，startTime/endTime 为毫秒时间戳，
+  intervalStepModel/speedStandard = 0，state = 1。
+
+laps_json 单圈 14 键：
+  id, lapIndex, distance, duration, cumulativeDuration, avgPace（分/公里）,
+  avgCadence, avgStride（厘米）, elevationGain, endAltAbs, endAltRel,
+  step, isFullLap, flag
+
+
+========================================================================
+§10 坐标系与轨迹生成
+========================================================================
+
+坐标：
+  - 点位接口/围栏是 BD-09；服务端上传的 gLat/gLng 用 GCJ-02。
+  - track.locations 内部存 BD（gLat/gLng 命名沿用历史的 BD），
+    输出 OBS 时 wire::bd09_to_gcj02 转一次，**只转一次**。
+  - 生活点 lat/lng 固定 -1.0（哨兵）；coorType = "gcj02"。
+
+生成：
+  - 5s 主网格（含丢点 10/15s），再按 1s 加密（densify_locations）。
+  - 加密 = 相邻点之间插 k-1 个（k=ceil(dt/1.0)）；5s 间隔插 **4 个**，
+    不是固定 5 个。位置按弧长 pos(arc) 插值，不是直线。
+  - 不插的情况：端点 ptype=-1；dt<=0；|d_arc|<0.25（终点堆叠段）。
+  - 累计量（time/dist/steps）线性插值，端点不变 → 总量守恒。
+  - count/stepDistance 最后统一由 steps/totalDis 差分重建。
+  - 单向路网：crates/route-planner 用 petgraph DiGraph，A* 只走 Outgoing；
+    OSM oneway=yes 只加正向边，oneway=-1 只加反向，无标签按双向。
+    加密只沿已选路径取弧长，不感知方向，因此不会逆行。
+
+
+========================================================================
+§11 设备档案（geeToken）与电池/传感器
+========================================================================
+
+- 电池/传感器参数**不进跑步提交体**，只进 geeToken 的设备档案：
+  电池 → bs/br/plu/hea/btv/btc；传感器 → gpa（是否有陀螺仪）。
+- 作用：极验/风控的设备可信度与自洽性（电压随电量、跨请求一致、
+  模拟器常缺传感器），不是运动分析。
+- 原则：像真机、且同一 DeviceId 跨请求稳定；不要每次随机。
+- errorCode 默认 -999 + geeToken 空串；走完整极验链时才是 200。
+  服务端不强制，**不要伪造 200**（会制造"有 token 无记录"的矛盾）。
+- deviceVerify 默认不上报；官方挂在 requestFivePoint.onSuccess 后，
+  贸然打开等于自增校验点，缺 upload/originalSign 预登记时不要开。
+
+
+========================================================================
+§12 已知不一致 / 未验证（写代码时按"未验证"对待）
+========================================================================
+
+U1  iOS 请求头全部字段（无 iOS 抓包）。
+U2  信封 platform 是 1 还是 2（Android 的 Java 层构造被 ollvm 掉；
+    HttpUtil 证明 timeStamp 是毫秒；当前统一 platform=1 + 毫秒）。
+U3  body.latitude/longitude=0.0 只在"自由跑"样本被证实；
+    校园跑是否用它们做校区判定未知。
+U4  run_data 27 键点集：无真机 allLocJson 明文逐点样本。
+U5  extension_json 只确认"键存在、值为空串 gzip"。
+U6  iOS 是否需要省略 studentId、nonce 大小写。
+U7  室内提交（/api/v68/indoor/save/record）未接线；ObsKind::Indoor 已就绪。
+U8  segment_json 的 startTime/endTime 是毫秒还是秒偏移：按毫秒实现，
+    无样本验证；speedStandard/intervalStepModel 取值未知，暂 0。
+U9  APK 工作流偶发失败（与协议无关，可忽略；但 main 的 CI 三平台必须过）。
+U10 Windows 上 cargo test 偶发失败（见 §14.3 排查顺序）。
+
+
+========================================================================
+§13 常见错误清单（症状 → 原因 → 正确做法）
+========================================================================
+
+E1  提交 200 但记录判灰/无轨迹
+    → OBS 没传或 key 错。检查：只传一个 key、目录用北京时间、
+      Put 的 contentType=text/plain、11 键齐全（含 extension_json）。
+E2  403（OBS PUT）
+    → contentType 与换签时不一致。Put 用 text/plain。
+E3  提交 400/参数异常
+    → 头里 appVersion/UA/headerSign 三者不一致；或 body 少键。
+E4  "签名错误"
+    → 31 字段顺序/排序/盐/roomId 条件；goalId null vs 0；
+      bool 被写成 "true"；数字被写成字符串。
+E5  点位不显示
+    → 少报点位（fivePointJson 被裁剪）；或 isPass 全 false。
+E6  步频异常（300+ spm）
+    → 10s 窗末窗未按时长缩放；step_freq 常量应为 avgDiff=0/
+      maxDiff=0/minDiff=1000。
+E7  距离对不上
+    → totalDis 四舍五入（应截断）；或加密时端点被改写。
+E8  时区错（记录日期差一天）
+    → 用了 Local；必须 fmt_cst（UTC+8）。
+E9  逆向结论与代码冲突
+    → 以 neko-re-sources 文档/参考实现为准；仍冲突就标未验证并问用户。
+E10 加密重复转换坐标
+    → BD→GCJ 只转一次；转两次会出现几十米偏移。
+E11 把 Niko源码 当运行副本
+    → 它是旧快照（28 键/双 key/position=999），不要在其上继续开发。
+E12 提交了本地资料
+    → apis.* / .trae / 抓包原文 已 gitignore；不要 git add -A 后不看清单。
+
+
+========================================================================
+§14 验证与提交
+========================================================================
+
+14.1 改完必做的静态检查
+  - grep 旧签名：确认没有调用被改签名的旧函数（编译会报，但先自查）。
+  - 涉及 OBS：确认 11 键、键序、单 key、contentType、北京时间。
+  - 涉及签名：跑一遍 sign.rs 的自测用例（31 字段向量）。
+  - 涉及测试：更新断言时注释写明"随协议更新"。
+
+14.2 main 仓库
+  git add <仅相关文件>
+  git commit -m "<type>(<scope>): <中文简述>"
+  git push origin main
+  → 等 CI（三平台 check+test）全部 success；APK 失败可忽略（§U9）。
+
+14.3 CI 排查顺序
+  1) 看是哪个 job、哪一步失败（API: /actions/runs/<id>/jobs）
+  2) cargo check 失败 → 编译错误（签名/类型/导入）
+  3) cargo test 失败 → 先看是否断言过时（协议更新），再怀疑逻辑
+  4) 仅 Windows 失败 → 优先怀疑时间/路径/并发类既有用例，
+     重跑一次确认是否 flaky，不要立刻改协议代码
+  5) 三平台都失败 → 大概率是本次改动引入，回看 diff
+
+14.4 client 仓库
+  同样流程；CI 只有 APK（Android 交叉编译 = lib 编译检查）。
+  APK 构建失败时看 build 步骤日志，不要只看到 "APK" 红叉就以为协议错。
+
+14.5 commit message 约定
+  fix(protocol): …  协议字段/口径修正
+  feat(obs): …      OBS 对象/上传
+  feat(run-area): … 跑区/围栏
+  test(…): …        仅测试
+  chore: …          构建/文档
+  中文简述，一句话说清"改了什么 + 为什么"。
+
+
+========================================================================
+§15 代码地图（两个仓库基本同名）
+========================================================================
+
+src/api/submit.rs        45 键 body、签名调用、stopTime、speed
+src/api/flow.rs          全链编排：policy → 点位 → 轨迹 → 提交 → OBS → 详情
+src/api/fence.rs         围栏 + RunAreaMeta（fetch_geo_fence_with_area）
+src/api/obs.rs           换签与 PUT（contentType 规则）
+src/api/points.rs        点位接口（runAreaId 可选）
+src/track/wire.rs        OBS 11 键、五点、分段、laps、objectKey
+src/track/postfix.rs     1s 加密 densify_locations + 起终点哨兵
+src/track/generator.rs   环线轨迹（Catmull-Rom）
+src/track/generate_road.rs 路网轨迹（单向边、围栏裁剪、建筑避让）
+src/track/geom.rs        fmt_cst / fmt_gain_time / 坐标换算 / 距度常数
+src/crypto/sign.rs       31 字段签名（权威参考 reimpl-rust/sign.rs）
+src/crypto/header.rs     Android 23 键头 / iOS 头
+src/crypto/envelope.rs   请求信封
+src/crypto/decrypt.rs    响应解密（{r,s,v}）
+crates/route-planner/    有向路网图 + A* + 转向/坡度/配速剖面
+
+client 额外：
+  src/track/retime.rs / altitude.rs  配速/海拔曲线（curve 功能）
+  flow.rs 的 RunParams 带 pace_curve/altitude_curve
+
+
+========================================================================
+§16 交接检查单（每次提交前逐条打勾）
+========================================================================
+
+[ ] 我读了要改的文件，而不是凭记忆重写
+[ ] 改动只涉及必要文件；没有顺手格式化
+[ ] 没有新增未验证的字段/常量；未验证项已标注
+[ ] 签名 31 字段、OBS 11 键、头 23 键 未被意外改变
+[ ] 若改协议：单测同步更新，且注释说明依据
+[ ] 没有提交 apis.* / .trae / 抓包 / 凭据
+[ ] commit message 说清 改了什么 + 为什么
+[ ] push 后 CI 结果已确认（main 三平台、client APK）
+[ ] 失败时先定位再改，不连续叠加红叉提交
+
+
+========================================================================
+§17 参考锚点
+========================================================================
+
+- 协议契约：neko-re-sources/docs/contract/PROTOCOL.md
+- 真机抓包：…/docs/research/REAL-CAPTURE-7393.md（7.3.93）
+- 对齐审计：…/docs/research/ALIGN-7393-AUDIT.md（逐字段差异与证据）
+- 网络地图：…/docs/research/APP-NETWORK-MAP.md（端点、对象、字段）
+- 签名参考：…/native/reimpl-rust/sign.rs（31 字段 + 盐 + 排序）
+- 反编译 Java：…/java/jadx-7.4.0（UploadFormatEntity、AnalysisStateDB、
+  FivePoint、HttpUtil.getHeaderMap、CacheDataUtils 等）
+
+工作区（本机）另有 7.3.93 的 jadx 反编译：
+  C:\Users\ADMIN\Documents\deepseek-harness\default-workspace\jadxout\full\sources
+  证据示例：
+    entity/UploadFormatEntity.java      45 键字母序声明
+    entity/database/FivePoint.java      flag=会话时间戳
+    entity/database/AnalysisStateDB.java 分段 11 字段
+    utils/HttpUtil.java:83              timeStamp=System.currentTimeMillis()
+    utils/HttpUtil.java:114             isRoot 为字符串
+    utils/Utils.java:680                nonce=UUID.randomUUID() 小写
+
+========================================================================
+文档结束。若发现本文与代码不一致：以"有证据的一方"为准，并回来更新本文。
+========================================================================
