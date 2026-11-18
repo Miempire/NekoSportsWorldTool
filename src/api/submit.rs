@@ -5,7 +5,7 @@ use super::client::{check_business, ureq_err, ApiClient};
 use super::model::HOST;
 use crate::crypto::decrypt::{decrypt_response, derive_paes_key};
 use crate::crypto::envelope::{
-    build_envelope, build_envelope_ts, rsa_public_key, OuterOrder,
+    build_envelope, build_envelope_android, build_envelope_ts, rsa_public_key_android, OuterOrder,
 };
 use crate::crypto::header::{build_android_header, HeaderIdentity, ANDROID_APP_VERSION, UA_ANDROID};
 use crate::crypto::sign::{original_sign, signature};
@@ -194,12 +194,73 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
         body.insert("fivePointJson".into(), Value::String(p.five_point_json.clone()));
     }
     // Android 必现扩展字段
-    body.insert("errorCode".into(), Value::from(p.error_code));
+    // [201 修复] errorCode 必须与 geeToken 形态严格配对，否则服务端判「数据异常」：
+    //   空串     → -999
+    //   RzAy…(G02 服务端 token) → 200
+    //   R0VF…(GEE 本地 token)   → -300
+    // 以 token 为准强制推导，传入值只用于告警，避免「本地 token 配 0/200」这类致命错配。
+    let paired_code = crate::geetoken::code_for_token(&p.gee_token);
+    if paired_code != p.error_code {
+        log(&format!(
+            "⚠ [submit] errorCode 与 geeToken 不配对：传入 {} 但按 token 应为 {}（已强制改为 {}）token前缀={}",
+            p.error_code,
+            paired_code,
+            paired_code,
+            p.gee_token.chars().take(4).collect::<String>()
+        ));
+    }
+    body.insert("errorCode".into(), Value::from(paired_code));
     body.insert("geeToken".into(), Value::String(p.gee_token.clone()));
     body.insert("unauthorized".into(), Value::from(0));
     body.insert("themeId".into(), Value::from(-1));
     body.insert("goalId".into(), Value::from(BODY_GOAL_ID));
     body.insert("address".into(), Value::String(p.address.trim().to_string()));
+
+    // [201 修复] 提交体口径硬校验：服务端按这些口径判定「数据异常」，
+    // 本地先自查并告警（不阻断，避免误伤战术实验；但日志必须看得见）。
+    {
+        let mut bad: Vec<String> = Vec::new();
+        if body["totalDis"].as_i64().is_none() {
+            bad.push("totalDis 必须是整数（截断，不四舍五入）".into());
+        }
+        if body["validDis"].as_i64().is_none() {
+            bad.push("validDis 必须是整数".into());
+        }
+        if let Some(v) = body["latitude"].as_f64() {
+            if v != 0.0 {
+                bad.push("latitude 必须为 0.0（真机口径，不是起点坐标）".into());
+            }
+        }
+        if let Some(v) = body["longitude"].as_f64() {
+            if v != 0.0 {
+                bad.push("longitude 必须为 0.0（真机口径，不是起点坐标）".into());
+            }
+        }
+        if body["faceCheck"].as_i64().unwrap_or(-1) != 0 {
+            bad.push("faceCheck 必须为 0（无抽检记录时）".into());
+        }
+        if !body["speedPerTenSec"].as_array().map(|a| a.is_empty()).unwrap_or(false) {
+            bad.push("speedPerTenSec 必须为空数组（真数据在 OBS）".into());
+        }
+        if !body["stepsPerTenSec"].as_array().map(|a| a.is_empty()).unwrap_or(false) {
+            bad.push("stepsPerTenSec 必须为空数组（真数据在 OBS）".into());
+        }
+        let tt = body["totalTime"].as_i64().unwrap_or(0);
+        let vt = body["validTime"].as_i64().unwrap_or(0);
+        if vt > tt {
+            bad.push(format!("validTime({vt}) 不能大于 totalTime({tt})"));
+        }
+        let srt = body["selRunTime"].as_i64().unwrap_or(0);
+        if srt > tt {
+            bad.push(format!("selRunTime({srt}) 不能大于 totalTime({tt})"));
+        }
+        for b in &bad {
+            log(&format!("⚠ [submit] 口径异常: {b}"));
+        }
+        if bad.is_empty() {
+            log("[submit] 口径自查通过（totalDis/validDis 整数、lat/lon=0、faceCheck=0、数组空、时间自洽）");
+        }
+    }
 
     let body_val = Value::Object(body.clone());
     let sig = signature(&body_val, false);
@@ -208,8 +269,13 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
     body.insert("originalSign".into(), Value::String(orig));
     let body_plain = sorted_body_json(&body);
 
+    // [201 修复] 设备 ID 不允许为空时随机：随机会让头里的 DeviceId 与服务端会话绑定的设备漂移，
+    // 轻则 10121（设备风险），重则数据异常。这里直接拒绝，逼调用方用固定 ID。
     let device_id = if client.identity.device_id.is_empty() {
-        uuid::Uuid::new_v4().to_string().to_uppercase()
+        return Err(
+            "device_id 为空：提交前必须设置固定设备 ID（否则每次随机会导致设备漂移 → 10121/数据异常）"
+                .into(),
+        );
     } else {
         client.identity.device_id.clone()
     };
@@ -221,9 +287,21 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
         ..client.identity.clone()
     };
     let (hp, hp_extra) = build_android_header(&android_identity, p.uid, &client_token(client), None);
-    let header_env = build_envelope(&mut client.session, &hp, OuterOrder::Observed);
-    let now = crate::crypto::envelope::now_ms();
-    let body_env = build_envelope_ts(&mut client.session, &body_plain, OuterOrder::Insert, now + 1);
+    // [Android 链] 提交是最关键的口径——必须走 Android 信封，否则 h/platform/p-t 全错 → 数据异常。
+    let (header_env, body_env) = if client.session.android_ready() {
+        let rk = client.session.android_req_key().unwrap_or_default().to_string();
+        let kd = client.session.key_data();
+        let ts_sec = crate::crypto::envelope::now_ms() / 1000;
+        let henv = build_envelope_android(&rk, kd.clone(), &hp, OuterOrder::Observed, ts_sec);
+        let benv = build_envelope_android(&rk, kd, &body_plain, OuterOrder::Insert, ts_sec + 1);
+        (henv, benv)
+    } else {
+        log("[submit] 未注入 Android 信封材料，退回 iOS 口径（服务端大概率判数据异常）");
+        let henv = build_envelope(&mut client.session, &hp, OuterOrder::Observed);
+        let now = crate::crypto::envelope::now_ms();
+        let benv = build_envelope_ts(&mut client.session, &body_plain, OuterOrder::Insert, now + 1);
+        (henv, benv)
+    };
 
     let runes = format!("{}{}", p.policy_ts, p.uid);
     let runef = format!("{}{}", run_uuid, start_ms);
@@ -246,7 +324,10 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
     let key = derive_paes_key(
         &body_env.key_data[0], &body_env.key_data[1], &body_env.key_data[2], &body_env.key_data[3],
     );
-    let dec = decrypt_response(raw.as_bytes(), &key, &rsa_public_key())
+    // [Android 链] 响应 `s` 的验签公钥必须用 Android 那把（ccb3a6c5…），不是 iOS 的 b9a6a953…。
+    // lab 实测：Android 的请求加密公钥与响应验签公钥是同一把（都在 libnetseckit 0x171990）。
+    let verify_key = rsa_public_key_android().map_err(|e| format!("Android 验签公钥解析失败: {e}"))?;
+    let dec = decrypt_response(raw.as_bytes(), &key, &verify_key)
         .map_err(|e| format!("提交响应解密失败: {e}"))?;
     let biz = check_business(&dec.business)?;
     let rrid = super::client::get_field(&biz, "rrid").and_then(|v| v.as_i64()).unwrap_or(0);

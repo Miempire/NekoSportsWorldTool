@@ -416,7 +416,9 @@ pub fn run_full_flow(
         ));
         receipt
     } else {
-        (String::new(), 0)
+        // [201 修复] 不走极验时，提交体里的 errorCode 必须是 -999（与 geetoken::code_for_token("") 一致），
+        // 原来这里给 0 会与空 geeToken 不配对，服务端按「数据异常」拒绝。
+        (String::new(), -999)
     };
     let sp = SubmitParams {
         track,

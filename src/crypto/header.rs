@@ -56,6 +56,14 @@ pub struct HeaderIdentity {
     /// 极验设备档案 + 设备串 d（首次缺失时自动补齐）
     #[serde(default)]
     pub gt: Option<crate::geetoken::GtState>,
+    /// 【Android 链】运行时抓到的 reqKey（必须 16B）。
+    /// Android 上它每进程随机、随机源不是 /dev/urandom（lab 12k 候选暴破未命中），
+    /// 静态无法推导——由抓取工具写入 identity.json，或手工填。
+    #[serde(default)]
+    pub android_req_key: Option<String>,
+    /// 【Android 链】运行时抓到的 4 段 keyData（每段 8–12B，字符集含 `^ ' ,`）。
+    #[serde(default)]
+    pub android_key_data: Option<[String; 4]>,
 }
 
 pub fn random_mac() -> String {
@@ -124,6 +132,8 @@ impl Default for HeaderIdentity {
             battery: None,
             sensors: None,
             gt: None,
+            android_req_key: None,
+            android_key_data: None,
         }
     }
 }

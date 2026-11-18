@@ -33,6 +33,22 @@ VEhifHXZq825fI9hGYtDoaVQmCN/Nfs2dKmt89XDrhtl3SZxO6TumOCTQt+5oqjF\n\
 2Jo3o1YtkAyGzjaJnwIDAQAB\n\
 -----END PUBLIC KEY-----";
 
+/// 【逆向实测】Android 链（易盾 NetSecKit 4.2.4）请求加密用的 RSA-1024 公钥。
+///
+/// 来源：`sw_app.apk` → `lib/arm64-v8a/libnetseckit-4.2.4.so`，文件偏移 `0x171990`
+/// 的 SPKI DER（`30 81 9f 30 0d 06 09 2a 86 48 86 f7 0d 01 01 01 05 00 03 81 8d 00 …`，
+/// 162 B），模数 `ccb3a6c585be65ad…`、指数 65537。
+///
+/// 注意：这与 iOS 链的 `RSA_PUB_PEM`（模数 `b9a6a953…`）**不是同一把**——
+/// lab 用 unidbg 实测 Android 的 `k` 就是用这把公钥加密的。
+/// 另外这把也同时被用作响应 `s` 的验签公钥（同一 SPKI 两用）。
+pub const RSA_PUB_PEM_ANDROID: &str = "-----BEGIN PUBLIC KEY-----\n\
+MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDMs6bFhb5lrf/xqwtNcKVHW09c\n\
+oMbtLAmr9Rti7vnSnVroFuLHJEzxMqPQeItByr1Fu4RAQMR/aq/oknn53kCOuSaV\n\
+sd9mnDCusrs7GmExDxlKe2pNAKTEZnT1FITQYT2SJkeCZ8iBKujqN61C3SXQ4Xa8\n\
+QRr2uMTicec6XC08WQIDAQAB\n\
+-----END PUBLIC KEY-----";
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OuterOrder {
     /// [k,p,d,h,t] —— 真实 headerSign 样本顺序
@@ -125,6 +141,21 @@ pub fn req_key() -> String {
     random_fragment(16)
 }
 
+/// Android keyData 一段：随机 8–12 字节可打印 ASCII（0x21..0x7e）。
+///
+/// lab 用 unidbg 实测 Android 链的 keyData 是**会话随机短串**（长度 8–12，字符集含
+/// `^ ' ,` 等不在 SALT_ALPHABET 内的字符），因此这里用更宽的可打印 ASCII 池，
+/// 与真机观测口径一致（服务端只做 8–12B 长度约束，不校验具体字符）。
+fn random_keydata() -> String {
+    let mut rng = rand::thread_rng();
+    let len = rng.gen_range(8..=12);
+    let mut s = String::with_capacity(len);
+    for _ in 0..len {
+        s.push(rng.gen_range(0x21..=0x7e) as u8 as char);
+    }
+    s
+}
+
 /// normalize_raw_key_data：≤7B 补随机字母数字到 12；≥13B 取 UTF-8 末 12；8-12 原样。
 pub fn normalize_raw_key_data(value: &str) -> String {
     let bytes = value.as_bytes();
@@ -149,6 +180,10 @@ pub fn key_data_four_from_ms(now_ms_f64: f64) -> String {
 /// NTESSecurityKit singleton 会话：Four 首次生成后整个会话复用。
 pub struct EnvelopeSession {
     four: Option<String>,
+    /// 【Android 链】每进程随机 16B reqKey（实测不可由本进程推导，必须外部注入）。
+    android_req_key: Option<String>,
+    /// 【Android 链】会话随机 4 段 keyData（长度 8–12，字符集含 `^ ' ,`，必须外部注入）。
+    android_key_data: Option<[String; 4]>,
 }
 
 impl Default for EnvelopeSession {
@@ -159,10 +194,74 @@ impl Default for EnvelopeSession {
 
 impl EnvelopeSession {
     pub fn new() -> Self {
-        Self { four: None }
+        Self { four: None, android_req_key: None, android_key_data: None }
+    }
+
+    /// 【Android 链】显式覆盖 reqKey + 4 段 keyData（可选）。
+    ///
+    /// 正常情况下**不必调用**：`ensure_android_material()` 会自动随机生成。仅当要复现
+    /// 某一特定会话（把抓包/内存抓到的值原样复刻）时才用它覆盖。
+    /// 返回 Err 表示值不合法（reqKey 必须 16B；keyData 每段 8–12B）。
+    pub fn set_android_material(
+        &mut self,
+        req_key: &str,
+        key_data: [String; 4],
+    ) -> Result<(), String> {
+        if req_key.as_bytes().len() != 16 {
+            return Err(format!(
+                "Android reqKey 必须是 16B，得到 {}B",
+                req_key.as_bytes().len()
+            ));
+        }
+        for (i, v) in key_data.iter().enumerate() {
+            let l = v.as_bytes().len();
+            if !(8..=12).contains(&l) {
+                return Err(format!(
+                    "Android keyData[{}] 长度必须是 8..12B，得到 {}B: {:?}",
+                    i, l, v
+                ));
+            }
+        }
+        self.android_req_key = Some(req_key.to_string());
+        self.android_key_data = Some(key_data);
+        Ok(())
+    }
+
+    /// Android 链是否已具备可用的运行时材料。
+    pub fn android_ready(&self) -> bool {
+        self.android_req_key.is_some() && self.android_key_data.is_some()
+    }
+
+    /// 取已注入的 Android reqKey（未注入返回 None）。
+    pub fn android_req_key(&self) -> Option<&str> {
+        self.android_req_key.as_deref()
+    }
+
+    /// 【关键更正】Android 的 reqKey + keyData 是**客户端每会话随机生成**的，不是服务端下发的秘密：
+    /// 服务端用 RSA 私钥从 `k` 解出 reqKey，再用它解 `d` 得到 container 及 keyData 明文，
+    /// 并据此派生响应密钥 —— 所以重实现客户端**自己随机生成即可，无需从真机窃取**。
+    ///
+    /// 本方法在未注入时自动随机填充，使 Android 平台下 `android_ready()` 恒为 true。
+    /// 只在「要复现某一特定会话」时才需要用 `set_android_material` 覆盖为抓到的值。
+    pub fn ensure_android_material(&mut self) -> String {
+        if self.android_req_key.is_none() {
+            self.android_req_key = Some(random_fragment(16));
+        }
+        if self.android_key_data.is_none() {
+            self.android_key_data = Some([
+                random_keydata(),
+                random_keydata(),
+                random_keydata(),
+                random_keydata(),
+            ]);
+        }
+        self.android_req_key.clone().unwrap()
     }
 
         pub fn key_data(&mut self) -> [String; 4] {
+        if let Some(kd) = &self.android_key_data {
+            return kd.clone();
+        }
         if self.four.is_none() {
             self.four = Some(key_data_four_from_ms(now_ms() as f64));
         }
@@ -177,7 +276,7 @@ impl EnvelopeSession {
     /// 测试注入固定 Four。
     #[allow(dead_code)]
     pub fn with_four(four: &str) -> Self {
-        Self { four: Some(four.to_string()) }
+        Self { four: Some(four.to_string()), android_req_key: None, android_key_data: None }
     }
 }
 
@@ -219,6 +318,94 @@ pub fn build_envelope_ts(
     };
     let json = serialize_envelope_fields(&d, &h, &k, order);
     BuiltEnvelope { json, container, req_key: rk, ts_ms, key_data }
+}
+
+/// 【逆向实测】Android 链信封（易盾 NetSecKit 4.2.4 口径）。
+///
+/// 与 iOS 的 `build_envelope_ts` 有 **6 处硬差异**（依据：
+/// `已有分析\native\envelope\envelope-review\docs\envelope-full-report.md` 的 unidbg 实测 +
+/// `信封格式对比-iOS-vs-Android.md`）：
+///
+/// | 项 | iOS | Android（本函数） |
+/// |---|---|---|
+/// | `platform` | 1 | **2** |
+/// | `timeStamp` | 毫秒 | **秒**（10 位） |
+/// | `h` | MD5(container) | **MD5(container + "\n")** |
+/// | `p` / `t` | 数字 101/0 | **字符串 "101"/"0"** |
+/// | RSA 公钥 | `b9a6a953…` | **`ccb3a6c5…`**（`RSA_PUB_PEM_ANDROID`） |
+/// | 容器键序 | 插入序 | **字典序**（serde_json Map 默认即字典序，天然满足） |
+///
+/// 仍需外部注入的运行时量（**本函数无法生成**）：
+/// - `reqKey`：Android 实测是**每进程随机 16B**，随机源未知（不是 /dev/urandom）；
+/// - `keyDataOne..Four`：Android 实测是**会话随机短串**（长度 8–12，字符集含 `^ ' ,`），
+///   不是 iOS 那四个常量。
+pub fn build_envelope_android(
+    req_key: &str,
+    key_data: [String; 4],
+    plain: &str,
+    out_order: OuterOrder,
+    ts_sec: i64,
+) -> BuiltEnvelope {
+    let container_data = B64.encode(plain.as_bytes());
+    let container = serialize_container_android(&container_data, ts_sec, &key_data);
+    let d = B64.encode(aes128_cbc_encrypt(req_key.as_bytes(), &container).unwrap_or_default());
+    // Android：h 覆盖 container + 一个换行符
+    let mut h_input = container.clone();
+    h_input.push(b'\n');
+    let h = md5_hex(&h_input);
+    let k = {
+        let pk = match rsa_public_key_android() {
+            Ok(v) => v,
+            Err(_) => return BuiltEnvelope {
+                json: String::new(),
+                container,
+                req_key: req_key.to_string(),
+                ts_ms: ts_sec,
+                key_data,
+            },
+        };
+        let mut rng = rand::thread_rng();
+        let ct = pk
+            .encrypt(&mut rng, rsa::Pkcs1v15Encrypt, req_key.as_bytes())
+            .unwrap_or_default();
+        B64.encode(ct)
+    };
+    let json = serialize_envelope_fields_android(&d, &h, &k, out_order);
+    BuiltEnvelope { json, container, req_key: req_key.to_string(), ts_ms: ts_sec, key_data }
+}
+
+/// Android 内层容器：字典序 + `platform=2` + `timeStamp` 用**秒**。
+pub fn serialize_container_android(data_b64: &str, ts_sec: i64, key_data: &[String; 4]) -> Vec<u8> {
+    let mut m = serde_json::Map::new();
+    m.insert("data".into(), serde_json::Value::String(data_b64.to_string()));
+    m.insert("keyDataFour".into(), serde_json::Value::String(key_data[3].clone()));
+    m.insert("keyDataOne".into(), serde_json::Value::String(key_data[0].clone()));
+    m.insert("keyDataThree".into(), serde_json::Value::String(key_data[2].clone()));
+    m.insert("keyDataTwo".into(), serde_json::Value::String(key_data[1].clone()));
+    m.insert("platform".into(), serde_json::Value::from(2));
+    m.insert("timeStamp".into(), serde_json::Value::from(ts_sec));
+    serde_json::to_vec(&serde_json::Value::Object(m)).unwrap_or_default()
+}
+
+/// Android 外层信封：`d,h,k,p,t`，`p`/`t` 是**字符串**。
+pub fn serialize_envelope_fields_android(d: &str, h: &str, k: &str, order: OuterOrder) -> String {
+    let p = "\"101\"";
+    let t = "\"0\"";
+    match order {
+        OuterOrder::Observed => {
+            format!("{{\"k\":\"{k}\",\"p\":{p},\"d\":\"{d}\",\"h\":\"{h}\",\"t\":{t}}}")
+        }
+        OuterOrder::Insert => {
+            format!("{{\"d\":\"{d}\",\"h\":\"{h}\",\"k\":\"{k}\",\"p\":{p},\"t\":{t}}}")
+        }
+    }
+}
+
+/// Android 链 RSA 公钥（模数 `ccb3a6c5…`）。
+pub fn rsa_public_key_android() -> Result<rsa::RsaPublicKey, String> {
+    use rsa::pkcs8::DecodePublicKey;
+    rsa::RsaPublicKey::from_public_key_pem(RSA_PUB_PEM_ANDROID)
+        .map_err(|e| format!("Android RSA 公钥解析失败: {e}"))
 }
 
 /// inner container：固定键序紧凑 JSON（UTF-8 字节）。

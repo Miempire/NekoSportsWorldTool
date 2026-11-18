@@ -6,9 +6,12 @@
 use crate::api::model::Session;
 use crate::crypto::decrypt::{decrypt_response, derive_paes_key, Decrypted};
 use crate::crypto::envelope::{
-    build_envelope, build_envelope_ts, rsa_public_key, EnvelopeSession, OuterOrder,
+    build_envelope, build_envelope_android, build_envelope_ts, rsa_public_key,
+    rsa_public_key_android, EnvelopeSession, OuterOrder,
 };
-use crate::crypto::header::{build_header_for, HeaderIdentity, IOS_APP_VERSION, UA_IOS};
+use crate::crypto::header::{
+    build_header_for, HeaderIdentity, ANDROID_APP_VERSION, IOS_APP_VERSION, UA_IOS,
+};
 
 pub fn make_agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
@@ -33,9 +36,31 @@ pub struct RequestOutcome {
 
 impl ApiClient {
     pub fn new(identity: HeaderIdentity, login: Option<Session>) -> Self {
+        let mut session = EnvelopeSession::new();
+        // [Android 链] 把 identity.json 里注入的运行时材料灌进会话。
+        // 缺失时保持 android_ready()==false，请求自动退回 iOS 口径并可在日志里显式诊断。
+        if identity.platform == "android" {
+            match (&identity.android_req_key, &identity.android_key_data) {
+                (Some(rk), Some(kd)) => {
+                    match session.set_android_material(rk, kd.clone()) {
+                        Ok(()) => eprintln!(
+                            "[client] Android 信封口径已启用（reqKey 前 8 字符 = {}）",
+                            rk.chars().take(8).collect::<String>()
+                        ),
+                        Err(e) => eprintln!("[client] Android 材料注入失败（将退回 iOS 口径）: {e}"),
+                    }
+                }
+                _ => {
+                    eprintln!(
+                        "[client] Android 身份缺运行时材料（android_req_key/android_key_data），
+请先抓取后写入 identity.json，否则服务端会判数据异常"
+                    );
+                }
+            }
+        }
         Self {
             agent: make_agent(),
-            session: EnvelopeSession::new(),
+            session,
             identity,
             login,
         }
@@ -62,15 +87,33 @@ impl ApiClient {
         let uid = self.uid();
         let token = self.token();
         let (header_plain, _) = build_header_for(&self.identity, uid, &token, None);
-        let header_env = build_envelope(&mut self.session, &header_plain, OuterOrder::Observed);
-        // body 时间戳 = header ts + 1（原生两次独立读取毫秒）
-        let body_env =
-            build_envelope_ts(&mut self.session, body_plain, OuterOrder::Insert, header_env.ts_ms + 1);
+        // [Android 链] reqKey + 4 段 keyData 是客户端每会话随机的（服务端凭私钥从 k 解 reqKey），
+        // 本地 ensure_android_material() 自动随机生成即可，无需从真机窃取。
+        let (header_env, body_env) = if self.identity.platform == "android" {
+            let rk = self.session.ensure_android_material();
+            let kd = self.session.key_data();
+            let ts_sec = chrono::Utc::now().timestamp();
+            let henv = build_envelope_android(&rk, kd.clone(), &header_plain, OuterOrder::Observed, ts_sec);
+            let benv = build_envelope_android(&rk, kd, body_plain, OuterOrder::Insert, ts_sec + 1);
+            (henv, benv)
+        } else {
+            let henv = build_envelope(&mut self.session, &header_plain, OuterOrder::Observed);
+            // body 时间戳 = header ts + 1（原生两次独立读取毫秒）
+            let benv = build_envelope_ts(&mut self.session, body_plain, OuterOrder::Insert, henv.ts_ms + 1);
+            (henv, benv)
+        };
 
         let mut req = self.agent.request(method, url);
         req = req.set("Content-Type", "application/json; charset=utf-8");
         req = req.set("User-Agent", ua);
-        req = req.set("appVersion", IOS_APP_VERSION);
+        // [Android 链] 头里的 appVersion 必须跟身份平台走；原来硬编码 IOS_APP_VERSION 会让
+        // Android 身份发出 iOS 版本号，服务端一致性校验直接判异常。
+        let app_version = if self.identity.platform == "android" {
+            ANDROID_APP_VERSION
+        } else {
+            IOS_APP_VERSION
+        };
+        req = req.set("appVersion", app_version);
         req = req.set("headerSign", &header_env.json);
         for (k, v) in extra_headers {
             req = req.set(k, v);
@@ -85,9 +128,18 @@ impl ApiClient {
             &body_env.key_data[2],
             &body_env.key_data[3],
         );
-        let (decrypted, raw_head) = match decrypt_response(raw.as_bytes(), &key, &rsa_public_key()) {
-            Ok(d) => (Some(d), String::new()),
-            Err(e) => (None, format!("{e} | 原文: {}", crate::textlog::truncate(&raw, 160))),
+        // [Android 链] 响应 `s` 验签公钥跟平台走：Android 用 ccb3a6c5…，iOS 用 b9a6a953…。
+        let verify_key = if self.identity.platform == "android" {
+            rsa_public_key_android()
+        } else {
+            rsa_public_key()
+        };
+        let (decrypted, raw_head) = match verify_key {
+            Ok(pk) => match decrypt_response(raw.as_bytes(), &key, &pk) {
+                Ok(d) => (Some(d), String::new()),
+                Err(e) => (None, format!("{e} | 原文: {}", crate::textlog::truncate(&raw, 160))),
+            },
+            Err(e) => (None, format!("{e}")),
         };
         Ok(RequestOutcome { http_status: status, decrypted, raw_len, raw_head })
     }
@@ -106,12 +158,26 @@ impl ApiClient {
         let uid = self.uid();
         let token = self.token();
         let (header_plain, _) = build_header_for(&self.identity, uid, &token, None);
-        let header_env = build_envelope(&mut self.session, &header_plain, OuterOrder::Observed);
+        // [Android 链] raw 请求的 headerSign 同样要走 Android 口径
+        let header_env = if self.identity.platform == "android" && self.session.android_ready() {
+            let rk = self.session.android_req_key().unwrap_or_default().to_string();
+            let kd = self.session.key_data();
+            let ts_sec = chrono::Utc::now().timestamp();
+            build_envelope_android(&rk, kd, &header_plain, OuterOrder::Observed, ts_sec)
+        } else {
+            build_envelope(&mut self.session, &header_plain, OuterOrder::Observed)
+        };
 
         let mut req = self.agent.request(method, url);
         req = req.set("Content-Type", content_type);
         req = req.set("User-Agent", ua);
-        req = req.set("appVersion", IOS_APP_VERSION);
+        // [Android 链] 同 envelope_request：appVersion 跟平台走
+        let app_version = if self.identity.platform == "android" {
+            ANDROID_APP_VERSION
+        } else {
+            IOS_APP_VERSION
+        };
+        req = req.set("appVersion", app_version);
         req = req.set("headerSign", &header_env.json);
         for (k, v) in extra_headers {
             req = req.set(k, v);
@@ -126,12 +192,18 @@ impl ApiClient {
             &header_env.key_data[2],
             &header_env.key_data[3],
         );
-        let (decrypted, raw_head) = match decrypt_response(raw.as_bytes(), &key, &rsa_public_key()) {
-            Ok(d) => (Some(d), String::new()),
-            Err(e) => (
-                None,
-                format!("{e} | 原文: {}", crate::textlog::truncate(&raw, 160)),
-            ),
+        // [Android 链] 响应 `s` 验签公钥跟平台走
+        let verify_key = if self.identity.platform == "android" {
+            rsa_public_key_android()
+        } else {
+            rsa_public_key()
+        };
+        let (decrypted, raw_head) = match verify_key {
+            Ok(pk) => match decrypt_response(raw.as_bytes(), &key, &pk) {
+                Ok(d) => (Some(d), String::new()),
+                Err(e) => (None, format!("{e} | 原文: {}", crate::textlog::truncate(&raw, 160))),
+            },
+            Err(e) => (None, format!("{e}")),
         };
         Ok(RequestOutcome { http_status: status, decrypted, raw_len, raw_head })
     }
