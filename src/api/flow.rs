@@ -16,6 +16,21 @@ use crate::track::wire::{
 use rand_distr::{Distribution, Normal};
 use serde_json::Value;
 
+/// 极验 scene=6 回执窗口策略（手机端可自行选择）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GeeWindowMode {
+    /// 固定 60 秒：提交快，但检查点多时回执密度偏高。
+    Fixed60,
+    /// 对齐真实 totalTime：最接近真机节奏，但长跑提交要等整场时长。
+    RealTotal,
+}
+
+impl Default for GeeWindowMode {
+    fn default() -> Self {
+        GeeWindowMode::Fixed60
+    }
+}
+
 #[derive(Clone)]
 pub struct RunParams {
     /// 距离（米）与时长（秒）已由 UI 参数解析。
@@ -38,6 +53,8 @@ pub struct RunParams {
     pub pace_range: Option<(f64, f64)>,
     /// 只经过策略必经点的前 N 个；`None`=全部，`Some(0)`=不经过。
     pub must_limit: Option<usize>,
+    /// 极验回执窗口策略（60s 固定 / 对齐真实 totalTime）。
+    pub gee_window_mode: GeeWindowMode,
 }
 
 pub struct RunOutcome {
@@ -377,9 +394,14 @@ pub fn run_full_flow(
     // scene=6 按检查点顺序在压缩窗口内按比例发；scene=7 最后发，用于提交体。
     let (gee_token, error_code) = if geetoken_on {
         let mut receipt = start_receipt;
-        // [防过快] 回执窗口上限固定 60s：比原来 12s 宽松，又不至于对齐 totalTime
-        // 导致长跑时提交要等整场时长。下限 2s。
-        let window = (pts.len() as f64 * 2.0).clamp(2.0, 60.0);
+        // [可配置] 回执窗口策略：固定 60s / 对齐真实 totalTime（手机端自行选择）。
+        let window = match params.gee_window_mode {
+            GeeWindowMode::Fixed60 => (pts.len() as f64 * 2.0).clamp(2.0, 60.0),
+            GeeWindowMode::RealTotal => {
+                let total_secs = (track.totalTime as f64).max(2.0);
+                (pts.len() as f64 * 2.0).clamp(2.0, total_secs)
+            }
+        };
         let mut waited = 0.0f64;
         for (index, _) in pts.iter().enumerate() {
             let target = window * (index + 1) as f64 / pts.len() as f64;

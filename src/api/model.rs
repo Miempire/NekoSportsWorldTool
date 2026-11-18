@@ -84,6 +84,9 @@ pub struct Config {
     /// 只经过策略必经点的前 N 个；None=全部，Some(0)=不经过任何必经点。
     #[serde(default)]
     pub must_points_limit: Option<usize>,
+    /// 极验 scene=6 回执窗口对齐真实 totalTime（false=固定 60s）。
+    #[serde(default)]
+    pub gee_window_real: bool,
 }
 
 fn default_route_mode() -> String {
@@ -129,6 +132,7 @@ impl Default for Config {
             osm_path: String::new(),
             route_mode: default_route_mode(),
             must_points_limit: None,
+            gee_window_real: false,
         }
     }
 }

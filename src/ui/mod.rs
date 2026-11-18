@@ -421,6 +421,7 @@ impl App {
                 hour: 12,
                 minute: 0,
                 face_check: config.face_check,
+                gee_window_real: config.gee_window_real,
                 must_limit: config
                     .must_points_limit
                     .map(|n| n.to_string())

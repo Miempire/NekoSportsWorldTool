@@ -86,6 +86,8 @@ pub struct RunPage {
     pub face_check: bool,
     /// 只经过策略必经点的前 N 个；空白=全部，0=不经过。
     pub must_limit: String,
+    /// 极验回执窗口是否对齐真实 totalTime（false=固定 60s）。
+    pub gee_window_real: bool,
     /// 预计算方案：参数变更时重抽样，提交直接使用
     pub plan: Option<RunPlan>,
     /// 路线算法模式
@@ -503,6 +505,11 @@ impl App {
                     page.preview_stale = true;
                 }
                 ui.label("留空=全部；0=不经过");
+            });
+            mobile::row(ui, |ui| {
+                ui.label("极验回执窗口：");
+                ui.radio_value(&mut page.gee_window_real, false, "固定 60s（提交快）");
+                ui.radio_value(&mut page.gee_window_real, true, "真实 totalTime（最像真机）");
             });
             ui.horizontal(|ui| {
                 ui.label("路线算法：");
@@ -1237,6 +1244,7 @@ impl App {
         self.config.pace_max = page.pace_max;
         self.config.face_check = page.face_check;
         self.config.must_points_limit = must_limit;
+        self.config.gee_window_real = page.gee_window_real;
         self.config.manual_altitude = manual_altitude;
         self.config.manual_altitude_range = manual_altitude_range;
         self.config.route_mode = match route_mode {
@@ -1272,6 +1280,11 @@ impl App {
                 track_outline,
                 pace_range: Some((plan.pace_min as f64, plan.pace_max as f64)),
                 must_limit,
+                gee_window_mode: if page.gee_window_real {
+                    crate::api::flow::GeeWindowMode::RealTotal
+                } else {
+                    crate::api::flow::GeeWindowMode::Fixed60
+                },
             };
             let payload = match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
                 Ok(out) => {

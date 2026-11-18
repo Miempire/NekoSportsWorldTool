@@ -45,6 +45,7 @@ fn allowed_flags(cmd: &str) -> Option<&'static [&'static str]> {
         "records-raw" => &["body", "out"],
         "obs-get" => &["key", "out"],
         "obs-sample" => &["dist", "dur", "rrid", "seed", "out"],
+        "track-dump" => &["dist", "dur", "seed", "out", "mode"],
         "semester" => &[],
         "cheat" => &["page"],
         "rank" => &["type", "sort", "gender", "date", "range"],
@@ -80,7 +81,7 @@ pub fn dispatch(args: Vec<String>) -> i32 {
     let portal_exempt = matches!(
         cmd.as_str(),
         "help" | "--help" | "-h" | "version" | "--version" | "-V" | "-v"
-            | "portal-login" | "portal-logout"
+            | "portal-login" | "portal-logout" | "track-dump"
     );
     if allowed_flags(&cmd).is_some() && !portal_exempt {
         let identity = model::load_identity();
@@ -115,6 +116,7 @@ pub fn dispatch(args: Vec<String>) -> i32 {
         "record-info" => cmd_record_info(&rest),
         "obs-get" => cmd_obs_get(&rest),
         "obs-sample" => cmd_obs_sample(&rest),
+        "track-dump" => cmd_track_dump(&rest),
         "ai-records" => cmd_ai_records(&rest),
         "ai-info" => cmd_ai_info(&rest),
         "semester" => cmd_semester(),
@@ -702,6 +704,7 @@ fn cmd_run(rest: &[&str]) -> i32 {
         // CLI 没有配速区间参数：以 --pace 为均值上下浮动 5s/km 作为范围
         pace_range: Some((pace_s as f64 - 5.0, pace_s as f64 + 5.0)),
         must_limit,
+        gee_window_mode: crate::api::flow::GeeWindowMode::default(),
     };
     match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
         Ok(out) => {
@@ -1137,6 +1140,111 @@ fn cmd_ai_info(rest: &[&str]) -> i32 {
             return 1;
         }
     }
+    0
+}
+
+/// 离线 track dump：固定 seed 生成轨迹，逐 step 输出 JSON。
+/// 不依赖登录、不依赖网络。用于 client vs 原版 对比。
+fn cmd_track_dump(rest: &[&str]) -> i32 {
+    use serde_json::{json, Value};
+    use std::collections::BTreeMap;
+
+    let flags = parse_flags(rest);
+    let dist_m: f64 = match get(&flags, "dist") {
+        Some(v) => v.parse().unwrap_or(1050.0),
+        None => 1050.0,
+    };
+    let dur_s: i64 = match get(&flags, "dur") {
+        Some(v) => v.parse().unwrap_or(480),
+        None => 480,
+    };
+    let seed: u64 = match get(&flags, "seed") {
+        Some(v) => v.parse().unwrap_or(7),
+        None => 7,
+    };
+    let out = get(&flags, "out").unwrap_or("track_dump_neko.json");
+    // 固定锚点（大连理工大学），保证两边一致
+    let center = (38.9210, 121.5470);
+    let start_ms: i64 = 1_700_000_000_000;
+
+    let track = match crate::track::generator::build(
+        dist_m, dur_s, seed, center, start_ms, &[], None,
+    ) {
+        Ok(t) => t,
+        Err(e) => { eprintln!("track 生成失败: {e}"); return 1; }
+    };
+
+    let mut sample_point = crate::track::model::GenPoint::default();
+    if let Some(p) = track.locations.first() { sample_point = p.clone(); }
+    let first_conv = crate::track::wire::conv_point(&sample_point, 1);
+
+    let rrid: i64 = 1_320_000_000;
+    let uuid = "TEST-UUID-DUMP";
+    let uid: i64 = 100001;
+    let platform = "android";
+    let obs_obj = crate::track::wire::build_obs_object(
+        &track, rrid, uuid, uid, &Vec::<serde_json::Value>::new(), platform,
+    );
+
+    // 解码 gzip+base64 字段
+    let obs_decoded: Value = {
+        let mut m = serde_json::Map::new();
+        for (k, v) in obs_obj.iter() {
+            let decoded: Value = match v {
+                Value::String(s) => {
+                    if let Ok(bytes) = base64::Engine::decode(
+                        &base64::engine::general_purpose::STANDARD, s.trim()
+                    ) {
+                        if let Ok(d) = flate2::read::gzdecode(bytes.as_slice()) {
+                            serde_json::from_slice(&d).unwrap_or(Value::Null)
+                        } else { Value::Null }
+                    } else { Value::Null }
+                }
+                other => other.clone(),
+            };
+            m.insert(k.clone(), decoded);
+        }
+        Value::Object(m)
+    };
+
+    let track_summary = json!({
+        "num_locations": track.locations.len(),
+        "total_distance": track.totalDistance,
+        "total_time": track.totalTime,
+        "total_steps": track.totalSteps,
+        "start_time": track.startTime,
+        "end_time": track.endTime,
+        "bdA_min": track.locations.iter().map(|p| p.bdA).fold(f64::INFINITY, f64::min),
+        "bdA_max": track.locations.iter().map(|p| p.bdA).fold(f64::NEG_INFINITY, f64::max),
+        "num_speedPerTenSec": track.speedPerTenSec.len(),
+        "num_stepsPerTenSec": track.stepsPerTenSec.len(),
+        "num_segments": track.segments.len(),
+        "first_3_speed": track.speedPerTenSec.iter().take(3).collect::<Vec<_>>(),
+        "first_3_steps": track.stepsPerTenSec.iter().take(3).collect::<Vec<_>>(),
+        "first_5_points": track.locations.iter().take(5).map(|p| json!({
+            "bdA": p.bdA, "bdD": p.bdD, "bdS": p.bdS, "bdG": p.bdG,
+            "hasAltitude": p.hasAltitude, "lat": p.lat, "lon": p.lon,
+        })).collect::<Vec<_>>(),
+        "last_5_points": track.locations.iter().rev().take(5).rev().map(|p| json!({
+            "bdA": p.bdA, "bdD": p.bdD, "bdS": p.bdS, "bdG": p.bdG,
+            "hasAltitude": p.hasAltitude, "lat": p.lat, "lon": p.lon,
+        })).collect::<Vec<_>>(),
+    });
+
+    let mut dump = BTreeMap::new();
+    dump.insert("step1_params".to_string(), json!({
+        "dist_m": dist_m, "dur_s": dur_s, "seed": seed,
+        "center": center, "start_ms": start_ms,
+    }));
+    dump.insert("step2_track_summary".to_string(), track_summary);
+    dump.insert("step3_conv_point_first".to_string(), first_conv);
+    dump.insert("step7_obs_obj_decoded".to_string(), obs_decoded);
+
+    let out_json = serde_json::to_string_pretty(&json!(dump)).unwrap_or_default();
+    std::fs::write(out, &out_json).map_err(|e| eprintln!("写入失败: {e}")).ok();
+    println!("已保存 {out}");
+    println!("  track: {} 点, {:.0}m, {}s, {} steps",
+        track.locations.len(), track.totalDistance, track.totalTime, track.totalSteps);
     0
 }
 
