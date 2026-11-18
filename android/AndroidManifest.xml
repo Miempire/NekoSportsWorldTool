@@ -5,6 +5,13 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 自更新：把已下载的新版 APK 交给系统安装器（用户在系统弹窗确认） -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 前台保活服务：Android 9+ 需要 FOREGROUND_SERVICE；Android 14+ dataSync 类型需要专门的权限 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Android 13+ 通知需要运行时权限，缺了不影响 startForeground，只是通知不显示 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 忽略电池优化：可显著降低后台被冻结概率，需用户手动授权（首次弹系统确认） -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
     <application android:label="Miempire's RUN TOOL" android:allowBackup="false"
         android:hasCode="true" android:extractNativeLibs="true" android:usesCleartextTraffic="false"
@@ -18,6 +25,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- 前台保活服务：与主 Activity 同进程，保持前台优先级防止跑步任务被回收 -->
+        <service android:name=".KeepAliveService" android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <!-- 自更新安装器读取私有目录里的 update.apk（只读、仅授权该 URI） -->
         <provider android:name=".ApkProvider" android:authorities="org.nekosportsworld.tool.apk"
             android:exported="false" android:grantUriPermissions="true" />

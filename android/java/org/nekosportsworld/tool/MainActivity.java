@@ -155,6 +155,10 @@ public final class MainActivity extends NativeActivity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        // 前台保活：启动 KeepAliveService，让本进程获得前台优先级，防后台被回收
+        startKeepAlive();
+        // 请求忽略电池优化（降低 Doze 冻结概率；已授权则跳过）
+        requestIgnoreBatteryOptimizations();
         // NativeActivity's rendering surface must stay inside system bars.
         View content = findViewById(android.R.id.content);
         content.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -187,6 +191,35 @@ public final class MainActivity extends NativeActivity {
         } else {
             getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+        }
+    }
+
+    /** 启动前台保活服务（与主 Activity 同进程，前台优先级防回收）。 */
+    private void startKeepAlive() {
+        try {
+            android.content.Intent intent = new android.content.Intent(this, KeepAliveService.class);
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
+        } catch (Throwable ignored) {
+            // 启动失败不阻断主流程（部分 ROM 限制前台服务）
+        }
+    }
+
+    /** 请求加入电池优化白名单，降低后台被 Doze 冻结的概率；已授权则跳过。 */
+    private void requestIgnoreBatteryOptimizations() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT < 23) return;
+            android.app.PowerManager pm = (android.app.PowerManager) getSystemService(POWER_SERVICE);
+            if (pm == null || pm.isIgnoringBatteryOptimizations(getPackageName())) return;
+            android.content.Intent intent = new android.content.Intent(
+                    android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            intent.setData(android.net.Uri.parse("package:" + getPackageName()));
+            startActivity(intent);
+        } catch (Throwable ignored) {
+            // 某些 ROM 无该设置页，忽略
         }
     }
 

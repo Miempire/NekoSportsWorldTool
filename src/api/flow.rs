@@ -377,11 +377,9 @@ pub fn run_full_flow(
     // scene=6 按检查点顺序在压缩窗口内按比例发；scene=7 最后发，用于提交体。
     let (gee_token, error_code) = if geetoken_on {
         let mut receipt = start_receipt;
-        // [防过快] 回执窗口对齐整场跑步时长（上限=totalTime），避免 pts 一多就把几十条
-        // scene=6 挤进 12 秒 → 服务端按极验回执密度判「数据异常」。
-        // 下限仍为 2 秒，保证 pts 极少时也不为 0。
-        let total_secs = (track.totalTime as f64).max(2.0);
-        let window = (pts.len() as f64 * 2.0).clamp(2.0, total_secs);
+        // [防过快] 回执窗口上限固定 60s：比原来 12s 宽松，又不至于对齐 totalTime
+        // 导致长跑时提交要等整场时长。下限 2s。
+        let window = (pts.len() as f64 * 2.0).clamp(2.0, 60.0);
         let mut waited = 0.0f64;
         for (index, _) in pts.iter().enumerate() {
             let target = window * (index + 1) as f64 / pts.len() as f64;
