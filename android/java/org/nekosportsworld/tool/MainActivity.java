@@ -212,7 +212,9 @@ public final class MainActivity extends NativeActivity {
     private void requestIgnoreBatteryOptimizations() {
         try {
             if (android.os.Build.VERSION.SDK_INT < 23) return;
-            android.app.PowerManager pm = (android.app.PowerManager) getSystemService(POWER_SERVICE);
+            // 注意：PowerManager 在 android.os 包下，不是 android.app
+            android.os.PowerManager pm =
+                    (android.os.PowerManager) getSystemService(POWER_SERVICE);
             if (pm == null || pm.isIgnoringBatteryOptimizations(getPackageName())) return;
             android.content.Intent intent = new android.content.Intent(
                     android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
