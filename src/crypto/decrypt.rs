@@ -298,7 +298,7 @@ mod tests {
     /// 畸形/敌意输入只返回 Err，不允许 panic。
     #[test]
     fn test_decrypt_never_panics_on_garbage() {
-        let pub_key = crate::crypto::envelope::rsa_public_key();
+        let pub_key = crate::crypto::envelope::rsa_public_key().unwrap();
         let key = derive_paes_key("nhang.school", "5K0E8400-E29", "597DEA1AFB49", "86123.456789");
         let cases: Vec<Vec<u8>> = vec![
             Vec::new(),
@@ -325,7 +325,7 @@ mod tests {
     /// 非加密响应（plain JSON）透传。
     #[test]
     fn test_plain_response_passthrough() {
-        let pub_key = crate::crypto::envelope::rsa_public_key();
+        let pub_key = crate::crypto::envelope::rsa_public_key().unwrap();
         let key = [0u8; 16];
         let raw = "{\"error\":10121,\"message\":\"设备风险\"}".as_bytes();
         let dec = decrypt_response(raw, &key, &pub_key).unwrap();

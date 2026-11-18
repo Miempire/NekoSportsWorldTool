@@ -58,9 +58,10 @@ pub enum OuterOrder {
 }
 
 /// 缓存 RSA 公钥（进程内只解析一次）。
-pub fn rsa_public_key() -> rsa::RsaPublicKey {
+pub fn rsa_public_key() -> Result<rsa::RsaPublicKey, String> {
     use rsa::pkcs8::DecodePublicKey;
-    rsa::RsaPublicKey::from_public_key_pem(RSA_PUB_PEM).expect("内置 RSA 公钥解析失败")
+    rsa::RsaPublicKey::from_public_key_pem(RSA_PUB_PEM)
+        .map_err(|e| format!("内置 RSA 公钥解析失败: {e}"))
 }
 
 pub fn now_ms() -> i64 {
@@ -309,7 +310,7 @@ pub fn build_envelope_ts(
     let d = B64.encode(aes128_cbc_encrypt(rk.as_bytes(), &container).unwrap_or_default());
     let h = md5_hex(&container);
     let k = {
-        let pk = rsa_public_key();
+        let pk = rsa_public_key().expect("内置 RSA 公钥解析失败");
         let mut rng = rand::thread_rng();
         let ct = pk
             .encrypt(&mut rng, rsa::Pkcs1v15Encrypt, rk.as_bytes())
@@ -533,7 +534,7 @@ mod tests {
     /// RSA 公钥解析 + 加密长度 = 128B（RSA-1024 块）。
     #[test]
     fn test_rsa_encrypt_len() {
-        let pk = rsa_public_key();
+        let pk = rsa_public_key().unwrap();
         let mut rng = rand::thread_rng();
         let ct = pk.encrypt(&mut rng, rsa::Pkcs1v15Encrypt, b"0123456789abcdef").unwrap();
         assert_eq!(ct.len(), 128);
