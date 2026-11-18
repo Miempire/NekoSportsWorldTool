@@ -393,7 +393,6 @@ pub fn run_full_flow(
     log("[record] 提交跑步记录（sportType=1）…");
     // scene=6 按检查点顺序在压缩窗口内按比例发；scene=7 最后发，用于提交体。
     let (gee_token, error_code) = if geetoken_on {
-        let mut receipt = start_receipt;
         // [可配置] 回执窗口策略：固定 60s / 对齐真实 totalTime（手机端自行选择）。
         let window = match params.gee_window_mode {
             GeeWindowMode::Fixed60 => (pts.len() as f64 * 2.0).clamp(2.0, 60.0),
@@ -410,7 +409,8 @@ pub fn run_full_flow(
                 std::thread::sleep(std::time::Duration::from_millis((wait * 1000.0) as u64));
             }
             waited = target;
-            receipt = crate::geetoken::make_token_with_mode(
+            // 循环内每条只用于日志，不跨轮保留（避免 unused_assignments）
+            let (receipt6, code6) = crate::geetoken::make_token_with_mode(
                 &client.identity,
                 sess.uid,
                 &run_uuid,
@@ -419,13 +419,14 @@ pub fn run_full_flow(
                 &mut *log,
             );
             log(&format!(
-                "[gee] scene=6 打卡回执 {}/{} token {} 字符",
+                "[gee] scene=6 打卡回执 {}/{} token {} 字符 code={}",
                 index + 1,
                 pts.len(),
-                receipt.0.len()
+                receipt6.len(),
+                code6
             ));
         }
-        receipt = crate::geetoken::make_token_with_mode(
+        let receipt = crate::geetoken::make_token_with_mode(
             &client.identity,
             sess.uid,
             &run_uuid,

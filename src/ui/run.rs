@@ -1245,6 +1245,12 @@ impl App {
         self.config.face_check = page.face_check;
         self.config.must_points_limit = must_limit;
         self.config.gee_window_real = page.gee_window_real;
+        // 在借用 self.run_page 结束前把窗口模式算成 Copy 值，避免闭包捕获 page 导致借用逃逸
+        let gee_window_mode = if page.gee_window_real {
+            crate::api::flow::GeeWindowMode::RealTotal
+        } else {
+            crate::api::flow::GeeWindowMode::Fixed60
+        };
         self.config.manual_altitude = manual_altitude;
         self.config.manual_altitude_range = manual_altitude_range;
         self.config.route_mode = match route_mode {
@@ -1280,11 +1286,7 @@ impl App {
                 track_outline,
                 pace_range: Some((plan.pace_min as f64, plan.pace_max as f64)),
                 must_limit,
-                gee_window_mode: if page.gee_window_real {
-                    crate::api::flow::GeeWindowMode::RealTotal
-                } else {
-                    crate::api::flow::GeeWindowMode::Fixed60
-                },
+                gee_window_mode,
             };
             let payload = match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
                 Ok(out) => {

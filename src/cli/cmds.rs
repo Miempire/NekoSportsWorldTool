@@ -1174,9 +1174,11 @@ fn cmd_track_dump(rest: &[&str]) -> i32 {
         Err(e) => { eprintln!("track 生成失败: {e}"); return 1; }
     };
 
-    let mut sample_point = crate::track::model::GenPoint::default();
-    if let Some(p) = track.locations.first() { sample_point = p.clone(); }
-    let first_conv = crate::track::wire::conv_point(&sample_point, 1);
+    // GenPoint 未实现 Default：用首个轨迹点转换，空轨迹时退化为 Null
+    let first_conv = match track.locations.first() {
+        Some(p) => crate::track::wire::conv_point(p, 1),
+        None => Value::Null,
+    };
 
     let rrid: i64 = 1_320_000_000;
     let uuid = "TEST-UUID-DUMP";
@@ -1188,21 +1190,28 @@ fn cmd_track_dump(rest: &[&str]) -> i32 {
 
     // 解码 gzip+base64 字段
     let obs_decoded: Value = {
+        use std::io::Read;
         let mut m = serde_json::Map::new();
-        for (k, v) in obs_obj.iter() {
+        let entries: Vec<(String, Value)> = match obs_obj.as_object() {
+            Some(map) => map.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            None => Vec::new(),
+        };
+        for (k, v) in entries {
             let decoded: Value = match v {
                 Value::String(s) => {
                     if let Ok(bytes) = base64::Engine::decode(
                         &base64::engine::general_purpose::STANDARD, s.trim()
                     ) {
-                        if let Ok(d) = flate2::read::gzdecode(bytes.as_slice()) {
-                            serde_json::from_slice(&d).unwrap_or(Value::Null)
+                        let mut d = String::new();
+                        let mut dec = flate2::read::GzDecoder::new(bytes.as_slice());
+                        if dec.read_to_string(&mut d).is_ok() {
+                            serde_json::from_str(&d).unwrap_or(Value::Null)
                         } else { Value::Null }
                     } else { Value::Null }
                 }
-                other => other.clone(),
+                other => other,
             };
-            m.insert(k.clone(), decoded);
+            m.insert(k, decoded);
         }
         Value::Object(m)
     };
@@ -1213,7 +1222,8 @@ fn cmd_track_dump(rest: &[&str]) -> i32 {
         "total_time": track.totalTime,
         "total_steps": track.totalSteps,
         "start_time": track.startTime,
-        "end_time": track.endTime,
+        // Track 无 endTime 字段：按 startTime + totalTime 推
+        "end_time": track.startTime + track.totalTime * 1000,
         "bdA_min": track.locations.iter().map(|p| p.bdA).fold(f64::INFINITY, f64::min),
         "bdA_max": track.locations.iter().map(|p| p.bdA).fold(f64::NEG_INFINITY, f64::max),
         "num_speedPerTenSec": track.speedPerTenSec.len(),
@@ -1223,11 +1233,11 @@ fn cmd_track_dump(rest: &[&str]) -> i32 {
         "first_3_steps": track.stepsPerTenSec.iter().take(3).collect::<Vec<_>>(),
         "first_5_points": track.locations.iter().take(5).map(|p| json!({
             "bdA": p.bdA, "bdD": p.bdD, "bdS": p.bdS, "bdG": p.bdG,
-            "hasAltitude": p.hasAltitude, "lat": p.lat, "lon": p.lon,
+            "hasAltitude": p.hasAltitude, "lat": p.lat, "lon": p.lng,
         })).collect::<Vec<_>>(),
         "last_5_points": track.locations.iter().rev().take(5).rev().map(|p| json!({
             "bdA": p.bdA, "bdD": p.bdD, "bdS": p.bdS, "bdG": p.bdG,
-            "hasAltitude": p.hasAltitude, "lat": p.lat, "lon": p.lon,
+            "hasAltitude": p.hasAltitude, "lat": p.lat, "lon": p.lng,
         })).collect::<Vec<_>>(),
     });
 

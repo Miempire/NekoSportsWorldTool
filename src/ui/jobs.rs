@@ -316,7 +316,8 @@ impl App {
         self.unregister_page.message = None;
         let identity = self.identity.clone();
         self.spawn_job(move |tx| {
-            let mut log = App::logger(tx.clone());
+            // unregister 不需要日志回调；保留 logger 以便后续接入，用 _ 前缀消除未使用告警
+            let _log = App::logger(tx.clone());
             let mut client = crate::api::client::ApiClient::new(identity, Some(session));
             let payload = match crate::api::account::unregister(&mut client, &code) {
                 Ok(_) => serde_json::json!({
