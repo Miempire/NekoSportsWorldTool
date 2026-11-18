@@ -377,7 +377,11 @@ pub fn run_full_flow(
     // scene=6 按检查点顺序在压缩窗口内按比例发；scene=7 最后发，用于提交体。
     let (gee_token, error_code) = if geetoken_on {
         let mut receipt = start_receipt;
-        let window = (pts.len() as f64 * 2.0).clamp(2.0, 12.0);
+        // [防过快] 回执窗口对齐整场跑步时长（上限=totalTime），避免 pts 一多就把几十条
+        // scene=6 挤进 12 秒 → 服务端按极验回执密度判「数据异常」。
+        // 下限仍为 2 秒，保证 pts 极少时也不为 0。
+        let total_secs = (track.totalTime as f64).max(2.0);
+        let window = (pts.len() as f64 * 2.0).clamp(2.0, total_secs);
         let mut waited = 0.0f64;
         for (index, _) in pts.iter().enumerate() {
             let target = window * (index + 1) as f64 / pts.len() as f64;
@@ -479,6 +483,19 @@ pub fn run_full_flow(
         log("√ [obs] OBS 上传成功");
     } else {
         log(&format!("⚠ [obs] 上传成功 {obs_ok}/{}", keys.len()));
+    }
+    // [校验] 回读第一个 objectKey，确认 OBS 已真正落盘且对象含 run_data（防「PUT 200 但对象被丢」）。
+    if obs_ok > 0 && !keys.is_empty() {
+        match super::obs::fetch_object(client, &keys[0], log) {
+            Ok(obj) => {
+                if obj.get("run_data").is_some() {
+                    log(&format!("√ [obs] 回读校验通过 objectKey={}", keys[0]));
+                } else {
+                    log(&format!("⚠ [obs] 回读对象缺 run_data：objectKey={}", keys[0]));
+                }
+            }
+            Err(e) => log(&format!("⚠ [obs] 回读校验失败: {e}")),
+        }
     }
 
     // ⑦ 详情验证
