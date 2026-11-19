@@ -32,6 +32,10 @@ pub struct RequestOutcome {
     pub raw_len: usize,
     /// 解密失败时的服务端原始返回摘要（诊断用）。
     pub raw_head: String,
+    /// 本次发出的请求信封前 160 字符（诊断用：对比真机信封形状）。
+    pub sent_head: String,
+    /// 本次实际使用的 User-Agent（诊断用：确认平台口径没串）。
+    pub sent_ua: String,
 }
 
 impl ApiClient {
@@ -104,8 +108,18 @@ impl ApiClient {
         };
 
         let mut req = self.agent.request(method, url);
-        req = req.set("Content-Type", "application/json; charset=utf-8");
-        req = req.set("User-Agent", ua);
+        // [真机口径] API 请求的 Content-Type 是 `application/json`（无 charset 参数）。
+        // 之前发 `application/json; charset=utf-8` 是 iOS 链的写法。
+        req = req.set("Content-Type", "application/json");
+        // [真机口径] UA 必须跟平台走：Android API 是 okhttp/4.12.0（实测 514 请求），
+        // 不是 WebView 串、更不是 iOS 的 SWCampus 串。之前这里直接用调用方传的 ua，
+        // 而多数调用点硬编码 UA_IOS → Android 身份发 iOS UA → 服务端返回 200+空 body。
+        let ua_effective = if self.identity.platform == "android" {
+            crate::crypto::header::UA_ANDROID
+        } else {
+            ua
+        };
+        req = req.set("User-Agent", ua_effective);
         // [Android 链] 头里的 appVersion 必须跟身份平台走；原来硬编码 IOS_APP_VERSION 会让
         // Android 身份发出 iOS 版本号，服务端一致性校验直接判异常。
         let app_version = if self.identity.platform == "android" {
@@ -141,7 +155,14 @@ impl ApiClient {
             },
             Err(e) => (None, format!("{e}")),
         };
-        Ok(RequestOutcome { http_status: status, decrypted, raw_len, raw_head })
+        Ok(RequestOutcome {
+            http_status: status,
+            decrypted,
+            raw_len,
+            raw_head,
+            sent_head: crate::textlog::truncate(&body_env.json, 160),
+            sent_ua: ua_effective.to_string(),
+        })
     }
 
     /// 发送原始字节体（Multipart 等）。headerSign 仍按信封链生成，
@@ -170,7 +191,13 @@ impl ApiClient {
 
         let mut req = self.agent.request(method, url);
         req = req.set("Content-Type", content_type);
-        req = req.set("User-Agent", ua);
+        // [真机口径] 同 envelope_request：Android 的 UA 固定 okhttp/4.12.0
+        let ua_effective = if self.identity.platform == "android" {
+            crate::crypto::header::UA_ANDROID
+        } else {
+            ua
+        };
+        req = req.set("User-Agent", ua_effective);
         // [Android 链] 同 envelope_request：appVersion 跟平台走
         let app_version = if self.identity.platform == "android" {
             ANDROID_APP_VERSION
@@ -205,7 +232,14 @@ impl ApiClient {
             },
             Err(e) => (None, format!("{e}")),
         };
-        Ok(RequestOutcome { http_status: status, decrypted, raw_len, raw_head })
+        Ok(RequestOutcome {
+            http_status: status,
+            decrypted,
+            raw_len,
+            raw_head,
+            sent_head: format!("<raw {}B>", body.len()),
+            sent_ua: ua_effective.to_string(),
+        })
     }
 
     /// 标准业务请求（RUN 域名）：返回业务 JSON；error != 10000 时 Err。
@@ -232,9 +266,12 @@ impl ApiClient {
         let url = format!("{}{}", host, path);
         let out = self.envelope_request(method, &url, body_plain, UA_IOS, extra_headers)?;
         let dec = out.decrypted.ok_or_else(|| {
+            // 诊断：把「实际发出的信封形状」和「实际 UA」也带出来，便于和真机抓包对比。
+            // 典型失败形态是 HTTP 200 + len=0（服务端静默拒绝，不回错误体），
+            // 常见原因依次是：UA 与平台不一致、Content-Type 带了 charset、信封口径串了。
             format!(
-                "HTTP {} 响应解密失败（len={}）原文: {}",
-                out.http_status, out.raw_len, out.raw_head
+                "HTTP {} 响应解密失败（len={}）UA={} 发信封={} | 原文: {}",
+                out.http_status, out.raw_len, out.sent_ua, out.sent_head, out.raw_head
             )
         })?;
         let business = match check_business(&dec.business) {

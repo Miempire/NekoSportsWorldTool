@@ -14,7 +14,21 @@ pub const IOS_APP_VERSION: &str = "7.4.0";
 pub const ANDROID_APP_VERSION: &str = "7.4.0";
 
 pub const UA_IOS: &str = "SWCampus/7.4.0 (iPhone; iOS 18.1; Scale/3.00)";
-pub const UA_ANDROID: &str = "Mozilla/5.0 (Linux; Android 14; 22081212C Build/UKQ1.231003.002) AppleWebKit/537.36 SWCampus/7.4.0";
+
+/// Android API 请求的 User-Agent。
+///
+/// 【实测依据】真机 514 个请求统计（`已有分析\docs\research\HEADER-CAPTURE-STATS.md`）：
+/// - **API 请求（run/datapoint/discovery…）UA 一律是 `okhttp/4.12.0`**
+/// - WebView 页面（h5）才是 `Mozilla/5.0 (...; wv) ... sportWorld`
+///
+/// 之前这里写的是 WebView 形态串，拿它去打 API 会导致服务端按「UA 与平台/信封不一致」
+/// 静默拒绝（HTTP 200 + 空 body），表现为「响应解密失败 len=0」。
+pub const UA_ANDROID: &str = "okhttp/4.12.0";
+
+/// Android WebView 形态 UA（仅 h5 页面用，API 不要用）。
+#[allow(dead_code)]
+pub const UA_ANDROID_WEBVIEW: &str =
+    "Mozilla/5.0 (Linux; Android 14; 22081212C Build/UKQ1.231003.002) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0 Mobile Safari/537.36 sportWorld";
 
 /// 真机样本 appUpdateTime − appInstallTime ≈ 26.8 天（覆盖安装）。
 pub const ANDROID_UPDATE_DELAY_MS: i64 = 2_315_520_000;
