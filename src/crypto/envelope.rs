@@ -350,10 +350,15 @@ pub fn build_envelope_android(
     let container_data = B64.encode(plain.as_bytes());
     let container = serialize_container_android(&container_data, ts_sec, &key_data);
     let d = B64.encode(aes128_cbc_encrypt(req_key.as_bytes(), &container).unwrap_or_default());
-    // Android：h 覆盖 container + 一个换行符
-    let mut h_input = container.clone();
-    h_input.push(b'\n');
-    let h = md5_hex(&h_input);
+    // Android：h 覆盖 container + 一个换行符（lab 结论）。
+    // 若服务端始终返回 HTTP200+空体，可用 MRT_H_NO_LF=1 试「不加换行」这一变体。
+    let h = if env_flag("MRT_H_NO_LF") {
+        md5_hex(&container)
+    } else {
+        let mut h_input = container.clone();
+        h_input.push(b'\n');
+        md5_hex(&h_input)
+    };
     let k = {
         let pk = match rsa_public_key_android() {
             Ok(v) => v,
@@ -388,10 +393,15 @@ pub fn serialize_container_android(data_b64: &str, ts_sec: i64, key_data: &[Stri
     serde_json::to_vec(&serde_json::Value::Object(m)).unwrap_or_default()
 }
 
-/// Android 外层信封：`d,h,k,p,t`，`p`/`t` 是**字符串**。
+/// Android 外层信封：`d,h,k,p,t`，`p`/`t` 默认是**字符串**（lab 结论）。
+///
+/// 若服务端始终返回 HTTP200+空体，可用 `MRT_PT_NUM=1` 试「数字」变体。
 pub fn serialize_envelope_fields_android(d: &str, h: &str, k: &str, order: OuterOrder) -> String {
-    let p = "\"101\"";
-    let t = "\"0\"";
+    let (p, t) = if env_flag("MRT_PT_NUM") {
+        ("101".to_string(), "0".to_string())
+    } else {
+        ("\"101\"".to_string(), "\"0\"".to_string())
+    };
     match order {
         OuterOrder::Observed => {
             format!("{{\"k\":\"{k}\",\"p\":{p},\"d\":\"{d}\",\"h\":\"{h}\",\"t\":{t}}}")
@@ -400,6 +410,11 @@ pub fn serialize_envelope_fields_android(d: &str, h: &str, k: &str, order: Outer
             format!("{{\"d\":\"{d}\",\"h\":\"{h}\",\"k\":\"{k}\",\"p\":{p},\"t\":{t}}}")
         }
     }
+}
+
+/// 读环境变量开关（"1" 为真）。
+fn env_flag(name: &str) -> bool {
+    std::env::var(name).ok().as_deref() == Some("1")
 }
 
 /// Android 链 RSA 公钥（模数 `ccb3a6c5…`）。
