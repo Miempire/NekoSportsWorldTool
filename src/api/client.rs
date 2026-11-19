@@ -90,9 +90,7 @@ impl ApiClient {
     ) -> Result<RequestOutcome, String> {
         let uid = self.uid();
         let token = self.token();
-        let (header_plain, _) = build_header_for(&self.identity, uid, &token, None);
-        // [Android 链] reqKey + 4 段 keyData 是客户端每会话随机的（服务端凭私钥从 k 解 reqKey），
-        // 本地 ensure_android_material() 自动随机生成即可，无需从真机窃取。
+        let (header_plain, header_extra) = build_header_for(&self.identity, uid, &token, None);
         let (header_env, body_env) = if self.identity.platform == "android" {
             let rk = self.session.ensure_android_material();
             let kd = self.session.key_data();
@@ -129,6 +127,16 @@ impl ApiClient {
         };
         req = req.set("appVersion", app_version);
         req = req.set("headerSign", &header_env.json);
+        // [真机口径·关键] Android 每个业务请求都**额外**带 nonce / timeStamp / tokenSign
+        // 三个独立 HTTP 头（实测抓包字段：Content-Type,User-Agent,appVersion,headerSign,
+        // nonce,timeStamp,tokenSign）。之前这里把 build_header_for 的第二个返回值丢弃，
+        // 这三个头一个都没发 → 服务端校验不过 → HTTP 200 但 body 为空。
+        // submit.rs 一直有补这三个头，通用请求却漏了。
+        if self.identity.platform == "android" {
+            for (k, v) in &header_extra {
+                req = req.set(k, v);
+            }
+        }
         for (k, v) in extra_headers {
             req = req.set(k, v);
         }
@@ -178,7 +186,7 @@ impl ApiClient {
     ) -> Result<RequestOutcome, String> {
         let uid = self.uid();
         let token = self.token();
-        let (header_plain, _) = build_header_for(&self.identity, uid, &token, None);
+        let (header_plain, header_extra) = build_header_for(&self.identity, uid, &token, None);
         // [Android 链] raw 请求的 headerSign 同样要走 Android 口径
         let header_env = if self.identity.platform == "android" && self.session.android_ready() {
             let rk = self.session.android_req_key().unwrap_or_default().to_string();
@@ -206,6 +214,12 @@ impl ApiClient {
         };
         req = req.set("appVersion", app_version);
         req = req.set("headerSign", &header_env.json);
+        // [真机口径·关键] 同 envelope_request：补 nonce / timeStamp / tokenSign 三个头
+        if self.identity.platform == "android" {
+            for (k, v) in &header_extra {
+                req = req.set(k, v);
+            }
+        }
         for (k, v) in extra_headers {
             req = req.set(k, v);
         }
