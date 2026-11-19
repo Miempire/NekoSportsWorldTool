@@ -142,17 +142,17 @@ pub fn req_key() -> String {
     random_fragment(16)
 }
 
-/// Android keyData 一段：随机 8–12 字节可打印 ASCII（0x21..0x7e）。
+/// Android keyData 一段：随机 8–12 字节可打印 ASCII（0x20..0x7e）。
 ///
-/// lab 用 unidbg 实测 Android 链的 keyData 是**会话随机短串**（长度 8–12，字符集含
-/// `^ ' ,` 等不在 SALT_ALPHABET 内的字符），因此这里用更宽的可打印 ASCII 池，
-/// 与真机观测口径一致（服务端只做 8–12B 长度约束，不校验具体字符）。
+/// 【静态实证】libnetseckit-4.2.4.so 里存在一条完整的可打印字符池常量
+/// 从 0x20 空格到 0x7e 波浪号共 95 个字符，与 lab unidbg 观测到的 keyData
+/// 含 ^ 单引号 逗号 等字符一致。之前取 0x21..0x7e（少了空格），已按实证修正。
 fn random_keydata() -> String {
     let mut rng = rand::thread_rng();
     let len = rng.gen_range(8..=12);
     let mut s = String::with_capacity(len);
     for _ in 0..len {
-        s.push(rng.gen_range(0x21..=0x7e) as u8 as char);
+        s.push(rng.gen_range(0x20..=0x7e) as u8 as char);
     }
     s
 }
