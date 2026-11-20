@@ -515,13 +515,37 @@ fn push_geojson_line(
     }
 }
 
-/// GeoJSON：FeatureCollection 里的 LineString / MultiLineString。
+/// 把一条 GeoJSON 坐标环（`[[lon,lat],...]`）转成节点 id 序列。
+fn push_geojson_ring(
+    ring: &serde_json::Value,
+    coord_id: &mut HashMap<(i64, i64), u64>,
+    nodes: &mut HashMap<u64, Coord>,
+    next_id: &mut u64,
+) -> Vec<u64> {
+    let Some(arr) = ring.as_array() else {
+        return Vec::new();
+    };
+    let mut refs = Vec::with_capacity(arr.len());
+    for pt in arr {
+        if let Some(c) = pt.as_array() {
+            let lon = c.first().and_then(|x| x.as_f64());
+            let lat = c.get(1).and_then(|x| x.as_f64());
+            if let (Some(lon), Some(lat)) = (lon, lat) {
+                refs.push(node_for(coord_id, nodes, next_id, lon, lat));
+            }
+        }
+    }
+    refs
+}
+
+/// GeoJSON：FeatureCollection 里的 LineString / MultiLineString / Polygon / MultiPolygon。
 fn parse_geojson(v: &serde_json::Value) -> Result<ParsedOsm, String> {
     let mut nodes = HashMap::new();
     let mut coord_id: HashMap<(i64, i64), u64> = HashMap::new();
     let mut next_id: u64 = 1;
     let mut roads = Vec::new();
     let mut way_id: u64 = 1;
+    let mut buildings: Vec<OsmBuilding> = Vec::new();
     let features = v["features"].as_array().cloned().unwrap_or_default();
     for feat in features {
         let geom = &feat["geometry"];
@@ -530,6 +554,12 @@ fn parse_geojson(v: &serde_json::Value) -> Result<ParsedOsm, String> {
             .get("highway")
             .and_then(|x| x.as_str())
             .unwrap_or("footway");
+        let is_building_feature = props
+            .get("building")
+            .map(|x| {
+                x.as_str().map(|s| !s.eq_ignore_ascii_case("no")).unwrap_or(true)
+            })
+            .unwrap_or(false);
         let oneway = json_flag(props, "oneway");
         let maxspeed = json_f64(props, "maxspeed");
         match geom["type"].as_str() {
@@ -561,16 +591,52 @@ fn parse_geojson(v: &serde_json::Value) -> Result<ParsedOsm, String> {
                     }
                 }
             }
+            Some("Polygon") => {
+                // coordinates[0] 是外环，其余是洞；建筑只用外环
+                if let Some(rings) = geom["coordinates"].as_array() {
+                    if let Some(outer) = rings.first() {
+                        let r = push_geojson_ring(
+                            outer,
+                            &mut coord_id,
+                            &mut nodes,
+                            &mut next_id,
+                        );
+                        if r.len() >= 3 {
+                            buildings.push(OsmBuilding { outer: vec![r] });
+                        }
+                    }
+                }
+                let _ = is_building_feature;
+            }
+            Some("MultiPolygon") => {
+                if let Some(polys) = geom["coordinates"].as_array() {
+                    for poly in polys {
+                        if let Some(rings) = poly.as_array() {
+                            if let Some(outer) = rings.first() {
+                                let r = push_geojson_ring(
+                                    outer,
+                                    &mut coord_id,
+                                    &mut nodes,
+                                    &mut next_id,
+                                );
+                                if r.len() >= 3 {
+                                    buildings.push(OsmBuilding { outer: vec![r] });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
-    if nodes.is_empty() || roads.is_empty() {
-        return Err("GeoJSON 里没有可用的 LineString 要素".into());
+    if nodes.is_empty() || (roads.is_empty() && buildings.is_empty()) {
+        return Err("GeoJSON 里没有可用的 LineString / Polygon 要素".into());
     }
     Ok(ParsedOsm {
         nodes,
         roads,
-        buildings: Vec::new(),
+        buildings,
         tracks: Vec::new(),
     })
 }
@@ -579,6 +645,7 @@ fn parse_geojson(v: &serde_json::Value) -> Result<ParsedOsm, String> {
 fn parse_overpass(v: &serde_json::Value) -> Result<ParsedOsm, String> {
     let mut nodes = HashMap::new();
     let mut roads = Vec::new();
+    let mut buildings: Vec<OsmBuilding> = Vec::new();
     let elements = v["elements"].as_array().cloned().unwrap_or_default();
     // 先收节点
     for el in &elements {
@@ -592,7 +659,7 @@ fn parse_overpass(v: &serde_json::Value) -> Result<ParsedOsm, String> {
             nodes.insert(id, Coord::new(lon, lat));
         }
     }
-    // 再收 way
+    // 再收 way（区分建筑与道路）
     for el in &elements {
         if el["type"].as_str() != Some("way") {
             continue;
@@ -606,6 +673,19 @@ fn parse_overpass(v: &serde_json::Value) -> Result<ParsedOsm, String> {
             continue;
         }
         let tags = &el["tags"];
+        // building=* 且不是 no → 当建筑轮廓（>=3 点），不再作道路
+        let is_building = tags
+            .get("building")
+            .map(|x| {
+                x.as_str()
+                    .map(|s| !s.eq_ignore_ascii_case("no"))
+                    .unwrap_or(true)
+            })
+            .unwrap_or(false);
+        if is_building && refs.len() >= 3 {
+            buildings.push(OsmBuilding { outer: vec![refs] });
+            continue;
+        }
         let highway = tags.get("highway").and_then(|x| x.as_str()).unwrap_or("footway");
         roads.push(OsmRoad {
             id,
@@ -616,13 +696,13 @@ fn parse_overpass(v: &serde_json::Value) -> Result<ParsedOsm, String> {
             maxspeed_kmh: json_f64(tags, "maxspeed"),
         });
     }
-    if nodes.is_empty() || roads.is_empty() {
+    if nodes.is_empty() || (roads.is_empty() && buildings.is_empty()) {
         return Err("Overpass JSON 里没有可用的 way 元素".into());
     }
     Ok(ParsedOsm {
         nodes,
         roads,
-        buildings: Vec::new(),
+        buildings,
         tracks: Vec::new(),
     })
 }
@@ -672,15 +752,49 @@ fn parse_generic(v: &serde_json::Value) -> Result<ParsedOsm, String> {
             maxspeed_kmh: json_f64(&wy, "maxspeed"),
         });
     }
-    if nodes.is_empty() || roads.is_empty() {
+    let buildings = parse_generic_buildings(v);
+    if nodes.is_empty() || (roads.is_empty() && buildings.is_empty()) {
         return Err("JSON 里 nodes/ways 为空或字段缺失".into());
     }
     Ok(ParsedOsm {
         nodes,
         roads,
-        buildings: Vec::new(),
+        buildings,
         tracks: Vec::new(),
     })
+}
+
+/// 通用 JSON 里的建筑：支持两种写法
+/// - `"buildings": [[id1,id2,id3,...], ...]`（节点 id 环数组）
+/// - `"buildings": [{"nodes": [id...]}, ...]`
+fn parse_generic_buildings(v: &serde_json::Value) -> Vec<OsmBuilding> {
+    let mut out = Vec::new();
+    for b in v["buildings"].as_array().cloned().unwrap_or_default() {
+        let ring: Vec<u64> = if let Some(arr) = b.as_array() {
+            arr.iter()
+                .filter_map(|x| {
+                    x.as_u64()
+                        .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
+                })
+                .collect()
+        } else {
+            b["nodes"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| {
+                            x.as_u64()
+                                .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        if ring.len() >= 3 {
+            out.push(OsmBuilding { outer: vec![ring] });
+        }
+    }
+    out
 }
 
 /// 解析 JSON 路网（自动识别 GeoJSON / Overpass / 通用 nodes+ways）。
