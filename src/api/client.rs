@@ -6,8 +6,8 @@
 use crate::api::model::Session;
 use crate::crypto::decrypt::{decrypt_response, derive_paes_key, Decrypted};
 use crate::crypto::envelope::{
-    build_envelope, build_envelope_android, build_envelope_ts, rsa_public_key,
-    rsa_public_key_android, EnvelopeSession, OuterOrder,
+    build_envelope, build_envelope_android, build_envelope_ts, rsa_public_key, EnvelopeSession,
+    OuterOrder,
 };
 use crate::crypto::header::{
     build_header_for, HeaderIdentity, ANDROID_APP_VERSION, IOS_APP_VERSION, UA_IOS,
@@ -150,16 +150,16 @@ impl ApiClient {
             &body_env.key_data[2],
             &body_env.key_data[3],
         );
-        // [Android 链] 响应 `s` 验签公钥跟平台走：Android 用 ccb3a6c5…，iOS 用 b9a6a953…。
-        let verify_key = if self.identity.platform == "android" {
-            rsa_public_key_android()
-        } else {
-            rsa_public_key()
-        };
+        // 【实测修正】响应 `s` 的验签公钥两平台都是 b9a6a953…（RSA_PUB_PEM）。
+        // 服务端实测：用它 raw 运算恢复出的摘要与 MD5(内层信封) 完全一致。
+        let verify_key = rsa_public_key();
         let (decrypted, raw_head) = match verify_key {
             Ok(pk) => match decrypt_response(raw.as_bytes(), &key, &pk) {
                 Ok(d) => (Some(d), String::new()),
-                Err(e) => (None, format!("{e} | 原文: {}", crate::textlog::truncate(&raw, 160))),
+                Err(e) => (
+                    None,
+                    format!("{e} | 原文: {}", crate::textlog::truncate(&raw, 160)),
+                ),
             },
             Err(e) => (None, format!("{e}")),
         };
@@ -233,16 +233,15 @@ impl ApiClient {
             &header_env.key_data[2],
             &header_env.key_data[3],
         );
-        // [Android 链] 响应 `s` 验签公钥跟平台走
-        let verify_key = if self.identity.platform == "android" {
-            rsa_public_key_android()
-        } else {
-            rsa_public_key()
-        };
+        // 【实测修正】响应 `s` 验签公钥两平台统一 b9a6a953…（实测恢复摘要与 MD5(inner) 一致）
+        let verify_key = rsa_public_key();
         let (decrypted, raw_head) = match verify_key {
             Ok(pk) => match decrypt_response(raw.as_bytes(), &key, &pk) {
                 Ok(d) => (Some(d), String::new()),
-                Err(e) => (None, format!("{e} | 原文: {}", crate::textlog::truncate(&raw, 160))),
+                Err(e) => (
+                    None,
+                    format!("{e} | 原文: {}", crate::textlog::truncate(&raw, 160)),
+                ),
             },
             Err(e) => (None, format!("{e}")),
         };

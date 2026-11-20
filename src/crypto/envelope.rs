@@ -350,17 +350,20 @@ pub fn build_envelope_android(
     let container_data = B64.encode(plain.as_bytes());
     let container = serialize_container_android(&container_data, ts_sec, &key_data);
     let d = B64.encode(aes128_cbc_encrypt(req_key.as_bytes(), &container).unwrap_or_default());
-    // Android：h 覆盖 container + 一个换行符（lab 结论）。
-    // 若服务端始终返回 HTTP200+空体，可用 MRT_H_NO_LF=1 试「不加换行」这一变体。
-    let h = if env_flag("MRT_H_NO_LF") {
-        md5_hex(&container)
-    } else {
+    // 【实测修正】h = MD5(container)，**不带换行**。
+    // 服务器实测矩阵（16 组合）唯一命中：rsa=ios公钥 plat=2 ts=秒 h=无换行 pt=字符串。
+    // 旧结论「h 带 \n」是 unidbg 推断，已被服务端实测否定；需要时可用 MRT_H_LF=1 回退。
+    let h = if env_flag("MRT_H_LF") {
         let mut h_input = container.clone();
         h_input.push(b'\n');
         md5_hex(&h_input)
+    } else {
+        md5_hex(&container)
     };
     let k = {
-        let pk = match rsa_public_key_android() {
+        // 【实测修正】Android 客户端加密 reqKey 用的就是和 iOS **同一把** RSA-1024 公钥
+        // （模数 b9a6a953…，即 RSA_PUB_PEM）。libnetseckit 里的 ccb3a6c5… 不是请求加密公钥。
+        let pk = match rsa_public_key() {
             Ok(v) => v,
             Err(_) => return BuiltEnvelope {
                 json: String::new(),
@@ -417,7 +420,11 @@ fn env_flag(name: &str) -> bool {
     std::env::var(name).ok().as_deref() == Some("1")
 }
 
-/// Android 链 RSA 公钥（模数 `ccb3a6c5…`）。
+/// Android 链备用 RSA 公钥（模数 `ccb3a6c5…`，来自 libnetseckit 0x171990）。
+///
+/// 【实测结论】**服务端不认这把**做请求加密。16 组合实测中，只有用 `RSA_PUB_PEM`
+/// （b9a6a953…，与 iOS 同一把）才被接受。保留此函数仅供其它链路实验。
+#[allow(dead_code)]
 pub fn rsa_public_key_android() -> Result<rsa::RsaPublicKey, String> {
     use rsa::pkcs8::DecodePublicKey;
     rsa::RsaPublicKey::from_public_key_pem(RSA_PUB_PEM_ANDROID)

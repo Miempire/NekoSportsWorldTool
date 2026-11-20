@@ -5,7 +5,7 @@ use super::client::{check_business, ureq_err, ApiClient};
 use super::model::HOST;
 use crate::crypto::decrypt::{decrypt_response, derive_paes_key};
 use crate::crypto::envelope::{
-    build_envelope, build_envelope_android, build_envelope_ts, rsa_public_key_android, OuterOrder,
+    build_envelope, build_envelope_android, build_envelope_ts, rsa_public_key, OuterOrder,
 };
 use crate::crypto::header::{build_android_header, HeaderIdentity, ANDROID_APP_VERSION, UA_ANDROID};
 use crate::crypto::sign::{original_sign, signature};
@@ -326,7 +326,8 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
     );
     // [Android 链] 响应 `s` 的验签公钥必须用 Android 那把（ccb3a6c5…），不是 iOS 的 b9a6a953…。
     // lab 实测：Android 的请求加密公钥与响应验签公钥是同一把（都在 libnetseckit 0x171990）。
-    let verify_key = rsa_public_key_android().map_err(|e| format!("Android 验签公钥解析失败: {e}"))?;
+    // 【实测修正】响应 `s` 验签公钥统一 b9a6a953…（实测恢复摘要与 MD5(inner) 一致）
+    let verify_key = rsa_public_key().map_err(|e| format!("验签公钥解析失败: {e}"))?;
     let dec = decrypt_response(raw.as_bytes(), &key, &verify_key)
         .map_err(|e| format!("提交响应解密失败: {e}"))?;
     let biz = check_business(&dec.business)?;
