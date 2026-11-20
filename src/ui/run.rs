@@ -88,6 +88,10 @@ pub struct RunPage {
     pub must_limit: String,
     /// 极验回执窗口是否对齐真实 totalTime（false=固定 60s）。
     pub gee_window_real: bool,
+    /// 轨迹生成模式（仅经典模式 Legacy 生效）。
+    pub track_gen_mode: crate::track::generator::TrackGenMode,
+    /// Bowl 模式是否叠加起始段爬升。
+    pub bowl_climb: bool,
     /// 预计算方案：参数变更时重抽样，提交直接使用
     pub plan: Option<RunPlan>,
     /// 路线算法模式
@@ -531,6 +535,31 @@ impl App {
                     ui.colored_label(theme::warn(), "（需先在「路网」页导入 OSM）");
                 }
             });
+            // 数据生成模式（只影响经典打卡点环；路网/跑道模式由路线本身决定形状）
+            mobile::row(ui, |ui| {
+                ui.label("数据生成：");
+                ui.selectable_value(
+                    &mut page.track_gen_mode,
+                    crate::track::generator::TrackGenMode::Current,
+                    "现有",
+                );
+                ui.selectable_value(
+                    &mut page.track_gen_mode,
+                    crate::track::generator::TrackGenMode::Bowl,
+                    "碗形海拔",
+                );
+                ui.selectable_value(
+                    &mut page.track_gen_mode,
+                    crate::track::generator::TrackGenMode::Niko,
+                    "Niko",
+                );
+            });
+            if page.track_gen_mode == crate::track::generator::TrackGenMode::Bowl {
+                mobile::row(ui, |ui| {
+                    ui.checkbox(&mut page.bowl_climb, "起始段先爬升");
+                    ui.small("关掉则只在中间下凹；起终点都是平的");
+                });
+            }
         }
 
         // 切换到路网/跑道模式时按需拉取电子围栏、实时点位与策略必经点（经典模式不触发）。
@@ -1262,6 +1291,15 @@ impl App {
         } else {
             crate::api::flow::GeeWindowMode::Fixed60
         };
+        // 轨迹生成模式同样先落成 Copy 值
+        let track_mode = page.track_gen_mode;
+        let bowl_climb = page.bowl_climb;
+        self.config.track_gen_mode = match track_mode {
+            crate::track::generator::TrackGenMode::Bowl => "bowl".into(),
+            crate::track::generator::TrackGenMode::Niko => "niko".into(),
+            crate::track::generator::TrackGenMode::Current => "current".into(),
+        };
+        self.config.bowl_climb = bowl_climb;
         self.config.manual_altitude = manual_altitude;
         self.config.manual_altitude_range = manual_altitude_range;
         self.config.route_mode = match route_mode {
@@ -1298,6 +1336,8 @@ impl App {
                 pace_range: Some((plan.pace_min as f64, plan.pace_max as f64)),
                 must_limit,
                 gee_window_mode,
+                track_mode,
+                bowl_climb,
             };
             let payload = match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
                 Ok(out) => {

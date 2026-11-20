@@ -9,7 +9,7 @@ use super::records::fetch_one_record;
 use super::submit::{submit_record, SubmitParams, SubmitResult};
 use crate::location::Coordinate;
 use crate::track::generate_road::RouteMode;
-use crate::track::generator::build as gen_track;
+use crate::track::generator::TrackGenMode;
 use crate::track::wire::{
     build_obs_object_with_area, five_point_wrapper_with_area, obs_keys,
 };
@@ -55,6 +55,10 @@ pub struct RunParams {
     pub must_limit: Option<usize>,
     /// 极验回执窗口策略（60s 固定 / 对齐真实 totalTime）。
     pub gee_window_mode: GeeWindowMode,
+    /// 轨迹生成模式（Current / Bowl / Niko），仅经典模式（Legacy）生效。
+    pub track_mode: TrackGenMode,
+    /// Bowl 模式是否叠加起始段爬升。
+    pub bowl_climb: bool,
 }
 
 pub struct RunOutcome {
@@ -347,7 +351,7 @@ pub fn run_full_flow(
                 Err(e) => return Err(format!("跑道模式生成失败（断路/自交/方向冲突）：{e}")),
             }
         }
-        RouteMode::Legacy => gen_track(
+        RouteMode::Legacy => crate::track::generator::build_with_mode(
             params.dist,
             params.dur,
             params.seed,
@@ -355,6 +359,8 @@ pub fn run_full_flow(
             start_ms,
             &pts_bd,
             v_bounds,
+            params.track_mode,
+            params.bowl_climb,
         )?,
     };
     if let Some(range) = params.manual_altitude_range {

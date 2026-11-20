@@ -705,6 +705,8 @@ fn cmd_run(rest: &[&str]) -> i32 {
         pace_range: Some((pace_s as f64 - 5.0, pace_s as f64 + 5.0)),
         must_limit,
         gee_window_mode: crate::api::flow::GeeWindowMode::default(),
+        track_mode: crate::track::generator::TrackGenMode::default(),
+        bowl_climb: false,
     };
     match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
         Ok(out) => {

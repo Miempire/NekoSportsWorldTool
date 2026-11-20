@@ -87,6 +87,16 @@ pub struct Config {
     /// 极验 scene=6 回执窗口对齐真实 totalTime（false=固定 60s）。
     #[serde(default)]
     pub gee_window_real: bool,
+    /// 轨迹生成模式：current（默认）/ bowl / niko。
+    #[serde(default = "default_track_gen_mode")]
+    pub track_gen_mode: String,
+    /// Bowl 模式是否叠加起始段爬升。
+    #[serde(default)]
+    pub bowl_climb: bool,
+}
+
+fn default_track_gen_mode() -> String {
+    "current".into()
 }
 
 fn default_route_mode() -> String {
@@ -133,6 +143,8 @@ impl Default for Config {
             route_mode: default_route_mode(),
             must_points_limit: None,
             gee_window_real: false,
+            track_gen_mode: default_track_gen_mode(),
+            bowl_climb: false,
         }
     }
 }

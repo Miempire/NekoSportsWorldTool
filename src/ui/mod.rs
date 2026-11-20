@@ -422,6 +422,12 @@ impl App {
                 minute: 0,
                 face_check: config.face_check,
                 gee_window_real: config.gee_window_real,
+                track_gen_mode: match config.track_gen_mode.as_str() {
+                    "bowl" => crate::track::generator::TrackGenMode::Bowl,
+                    "niko" => crate::track::generator::TrackGenMode::Niko,
+                    _ => crate::track::generator::TrackGenMode::Current,
+                },
+                bowl_climb: config.bowl_climb,
                 must_limit: config
                     .must_points_limit
                     .map(|n| n.to_string())
