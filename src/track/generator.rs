@@ -177,7 +177,7 @@ pub fn build_with_mode(
     v_bounds: Option<(f64, f64)>,
     mode: TrackGenMode,
     bowl_climb: bool,
-    /// 海拔是否使用碗形剖面（与配速独立控制；mode 只决定配速形态）
+    // 海拔是否使用碗形剖面（与配速独立控制；mode 只决定配速形态）
     bowl_altitude: bool,
 ) -> Result<Track, String> {
     let mut rng = Rng::new(seed);
