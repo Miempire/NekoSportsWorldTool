@@ -460,10 +460,47 @@ pub fn run_full_flow(
         gee_token,
         error_code,
     };
+    // ⑤ 【真机顺序】先上传 OBS，再提交记录。
+    // 实测：真机 OBS 对象里的 `rrid` 字段是 "0"（上传时记录还没生成），
+    // 服务端靠 objectKey 里的 uuid + 提交体的 uuid 关联两者。
+    // 旧实现是「先提交拿 rrid，再传 OBS(rrid=真实值)」，顺序与取值都错。
+    log("[obs] 先上传 OBS 对象（gzip+base64，11 键，rrid=0）…");
+    let obj = build_obs_object_with_area(
+        &sp.track,
+        0,
+        &sp.uuid,
+        sess.uid,
+        &pts,
+        &client.identity.platform,
+        &area,
+    );
+    let payload = obj.to_string().into_bytes();
+    let keys = obs_keys(&sp.track, 0, &sp.uuid);
+    let obs_ok = super::obs::upload_both_keys(client, &keys, &payload, log);
+    if obs_ok == keys.len() {
+        log("√ [obs] OBS 上传成功");
+    } else {
+        log(&format!("⚠ [obs] 上传成功 {obs_ok}/{}", keys.len()));
+    }
+    // [校验] 回读第一个 objectKey，确认 OBS 已真正落盘且对象含 run_data
+    if obs_ok > 0 && !keys.is_empty() {
+        match super::obs::fetch_object(client, &keys[0], log) {
+            Ok(obj) => {
+                if obj.get("run_data").is_some() {
+                    log(&format!("√ [obs] 回读校验通过 objectKey={}", keys[0]));
+                } else {
+                    log(&format!("⚠ [obs] 回读对象缺 run_data：objectKey={}", keys[0]));
+                }
+            }
+            Err(e) => log(&format!("⚠ [obs] 回读校验失败: {e}")),
+        }
+    }
+
+    // ⑥ 提交跑步记录（OBS 已就位，服务端按 uuid 取轨迹）
     let result = submit_record(client, &sp, log)?;
     sleep_secs(1);
 
-    // ⑤.5 极验回执（官方在 requestFivePoint.onSuccess 后上报；默认不发）
+    // ⑥.5 极验回执（官方在 requestFivePoint.onSuccess 后上报；默认不发）
     if std::env::var("MRT_DEVICE_VERIFY").ok().as_deref() == Some("1") {
         match std::env::var("MRT_GEE_TOKEN") {
             Ok(token) if !token.trim().is_empty() => {
@@ -480,42 +517,6 @@ pub fn run_full_flow(
                 }
             }
             _ => log("⚠ [deviceverify] 已开启但未提供 MRT_GEE_TOKEN，跳过"),
-        }
-    }
-
-    // ⑥ OBS 上传（官方只 PUT 一个 key）
-    log("[obs] 上传 OBS 对象（gzip+base64，11 键）…");
-    // 从提交结果回填 track.startTime（含随机秒偏移），保证 body/OBS/flag 全链一致
-    let mut track_for_obs = sp.track.clone();
-    track_for_obs.startTime = result.start_ms;
-    let obj = build_obs_object_with_area(
-        &track_for_obs,
-        result.rrid,
-        &result.uuid,
-        sess.uid,
-        &pts,
-        &client.identity.platform,
-        &area,
-    );
-    let payload = obj.to_string().into_bytes();
-    let keys = obs_keys(&track_for_obs, result.rrid, &result.uuid);
-    let obs_ok = super::obs::upload_both_keys(client, &keys, &payload, log);
-    if obs_ok == keys.len() {
-        log("√ [obs] OBS 上传成功");
-    } else {
-        log(&format!("⚠ [obs] 上传成功 {obs_ok}/{}", keys.len()));
-    }
-    // [校验] 回读第一个 objectKey，确认 OBS 已真正落盘且对象含 run_data（防「PUT 200 但对象被丢」）。
-    if obs_ok > 0 && !keys.is_empty() {
-        match super::obs::fetch_object(client, &keys[0], log) {
-            Ok(obj) => {
-                if obj.get("run_data").is_some() {
-                    log(&format!("√ [obs] 回读校验通过 objectKey={}", keys[0]));
-                } else {
-                    log(&format!("⚠ [obs] 回读对象缺 run_data：objectKey={}", keys[0]));
-                }
-            }
-            Err(e) => log(&format!("⚠ [obs] 回读校验失败: {e}")),
         }
     }
 

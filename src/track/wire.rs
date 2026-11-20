@@ -4,8 +4,7 @@
 //! 10s 窗（speed/step_freq）；每 1000m 一圈；五点 fixed_point_json。
 #![allow(non_snake_case)]
 
-use flate2::write::GzEncoder;
-use flate2::Compression;
+use flate2::{Compression, GzBuilder};
 use serde_json::{json, Value};
 use std::io::Write;
 
@@ -25,8 +24,15 @@ pub fn bd09_to_gcj02(bd_lat: f64, bd_lng: f64) -> (f64, f64) {
 }
 
 /// gzip + base64。
+///
+/// 【真机实测】真机所有字段的 gzip 头是 `1f8b 08 00 00000000 00 00`
+/// —— `XFL=0x00`、**`OS=0x00`(FAT)**，这是 Java `GZIPOutputStream` 的特征。
+/// flate2 默认写 `OS=0xff`(unknown)，逐字节对不上，必须显式改成 0。
+/// `Compression::default()`(=6) 产生的 XFL 恰好是 0x00，无需额外处理。
 pub fn gz(data: &[u8]) -> String {
-    let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+    let mut enc = GzBuilder::new()
+        .operating_system(0)
+        .write(Vec::new(), Compression::default());
     enc.write_all(data).expect("gzip 写入内存失败");
     let out = enc.finish().expect("gzip 收尾失败");
     super::super::crypto::envelope::b64_encode(&out)
@@ -41,20 +47,26 @@ fn gz_str(v: &str) -> String {
 }
 
 /// 27 键协议点集（gen 点 → OBS 点；gLat/gLng 由 BD 转 GCJ）。
+///
+/// 【真机实测 2026-11-20】精度必须逐字对齐，否则是可直接比对的数值指纹：
+/// - `gLat`/`gLng`、`totalDis`/`validDis` → **完整 f64，不取整**
+/// - `speed`/`avgSpeed`/`bdS`/`bdD`/`bdA` → **2 位小数**
+/// - `radius` → **5 位小数**（真机 0.02025）
+/// - `lat`/`lng` 恒 `-1.0`，真实坐标只在 gLat/gLng
 pub fn conv_point(p: &GenPoint, start_ms: i64) -> Value {
     let (glat, glng) = bd09_to_gcj02(p.gLat, p.gLng);
     json!({
-        "avgSpeed": round_to(p.avgSpeed, 4),
+        "avgSpeed": round_to(p.avgSpeed, 2),
         "bdA": round_to(p.bdA, 2),
         "bdD": round_to(p.bdD, 2),
         "bdG": p.bdG,
-        "bdS": round_to(p.bdS, 4),
+        "bdS": round_to(p.bdS, 2),
         "coorType": "gcj02",
         "count": p.count,
         "dtr": 0.0,
         "flag": start_ms,
-        "gLat": round_to(glat, 7),
-        "gLng": round_to(glng, 7),
+        "gLat": glat,
+        "gLng": glng,
         "gainTime": p.gainTime,
         "id": p.id,
         "lat": -1.0,
@@ -62,14 +74,14 @@ pub fn conv_point(p: &GenPoint, start_ms: i64) -> Value {
         "locType": p.locType,
         "locationId": "",
         "queueNum": p.queueNum,
-        "radius": round_to(p.radius, 2),
-        "speed": round_to(p.speed, 4),
+        "radius": round_to(p.radius, 5),
+        "speed": round_to(p.speed, 2),
         "state": p.state,
         "stepDistance": 0.0,
-        "totalDis": round_to(p.totalDis, 4),
+        "totalDis": p.totalDis,
         "totalTime": p.totalTime,
         "type": p.ptype,
-        "validDis": round_to(p.validDis, 4),
+        "validDis": p.validDis,
         "validTime": p.validTime,
     })
 }
@@ -253,9 +265,12 @@ mod validation_tests {
     }
 }
 
-/// 10s 时间窗，id=(rrid%100000)*1000+窗口序秒（6 个真人样本跨 9 月记录验证一致；
-/// 旧版 App 样本为全局序号，不适用当前版本）。
-fn build_windows(track: &Track, rrid: i64) -> (Vec<Value>, Vec<Value>) {
+/// 10s 时间窗。
+///
+/// 【真机实测 2026-11-20】窗口 `id` 是**从 112 开始连续递增**的全局序号
+/// （112,113,114…），不是 `(rrid%100000)*1000+秒`。
+/// 首窗 `beginTime=0`（不是 start_ms），`endTime` 为绝对毫秒。
+fn build_windows(track: &Track, _rrid: i64) -> (Vec<Value>, Vec<Value>) {
     let start_ms = track.startTime;
     let total_time = track.totalTime;
     let mut sp = Vec::new();
@@ -265,9 +280,11 @@ fn build_windows(track: &Track, rrid: i64) -> (Vec<Value>, Vec<Value>) {
         let lo = (i * 10) as i64;
         // 尾窗 time 为实际秒数（通常 <10），距离也是该时长内的真实距离，二者必须一致
         let hi = (lo + a.time).min(total_time);
-        let id = (rrid % 100000) * 1000 + hi;
+        // 真机：首窗 beginTime=0，其余为 start_ms + lo*1000
+        let begin = if i == 0 { 0 } else { start_ms + lo * 1000 };
+        let id = 112 + i as i64;
         sp.push(json!({
-            "beginTime": start_ms + lo * 1000,
+            "beginTime": begin,
             "distance": a.value,
             "endTime": start_ms + hi * 1000,
             "flag": start_ms,
@@ -277,7 +294,7 @@ fn build_windows(track: &Track, rrid: i64) -> (Vec<Value>, Vec<Value>) {
         }));
         stf.push(json!({
             "avgDiff": 0.0,
-            "beginTime": start_ms + lo * 1000,
+            "beginTime": begin,
             "endTime": start_ms + hi * 1000,
             "flag": start_ms,
             "id": id,
@@ -317,13 +334,15 @@ fn lap_json(
         "avgPace": avg_pace,
         "avgStride": round_to(lap_d / 1.max(lap_steps) as f64 * 100.0, 2),
         "cumulativeDuration": lap_start_t + lap_t,
-        "distance": round_to(lap_d, 4),
+        // 【真机实测】distance 是完整 f64（282.8397746235132），不取整
+        "distance": lap_d,
         "duration": lap_t,
         "elevationGain": round_to(gain, 2),
         "endAltAbs": round_to(end_alt, 2),
         "endAltRel": round_to(end_alt - alt0, 2),
         "flag": start_ms,
-        "id": idx,
+        // 【真机实测】id 从 2 开始（首圈 id=2），lapIndex 从 1 开始
+        "id": idx + 1,
         "isFullLap": lap_d >= 999.999,
         "lapIndex": idx,
         "step": lap_steps,
@@ -434,7 +453,7 @@ pub fn build_obs_object(
 /// `area` 来自围栏接口：校园跑必须带真实 `runAreaId/geoFencesJson/freedomShowFence`。
 pub fn build_obs_object_with_area(
     track: &Track,
-    rrid: i64,
+    _rrid: i64,
     uuid: &str,
     uid: i64,
     live_points: &[Value],
@@ -444,7 +463,7 @@ pub fn build_obs_object_with_area(
     let start_ms = track.startTime;
     let pts: Vec<Value> = track.locations.iter().map(|p| conv_point(p, start_ms)).collect();
     let run_wrap = json!({ "allLocJson": Value::Array(pts).to_string(), "useZip": false });
-    let (sp, stf) = build_windows(track, rrid);
+    let (sp, stf) = build_windows(track, 0);
     let laps = build_laps(track, start_ms, platform);
     let segs = build_segments(track, start_ms);
     let five = five_point_payload(live_points, start_ms, Some(track));
@@ -455,18 +474,21 @@ pub fn build_obs_object_with_area(
         "runAreaId": area.run_area_id,
         "useZip": false,
     });
+    // 【真机实测】键序必须与真机逐字一致（JSON 键序是可比对指纹）：
+    // uid, run_data, step_freq_json, extension_json, speed_json, runFaceCheck,
+    // laps_json, uuid, rrid, segment_json, fixed_point_json
     json!({
-        "rrid": gz_str(&rrid.to_string()),
         "uid": gz_str(&uid.to_string()),
-        "uuid": gz_str(uuid),
         "run_data": gz_json(&run_wrap),
         "step_freq_json": gz_json(&Value::Array(stf)),
+        "extension_json": gz_str(""),
         "speed_json": gz_json(&Value::Array(sp)),
+        "runFaceCheck": gz_str(""),
+        "laps_json": gz_json(&Value::Array(laps)),
+        "uuid": gz_str(uuid),
+        "rrid": gz_str("0"),
         "segment_json": gz_json(&Value::Array(segs)),
         "fixed_point_json": gz_json(&fx),
-        "runFaceCheck": gz_str(""),
-        "extension_json": gz_str(""),
-        "laps_json": gz_json(&Value::Array(laps)),
     })
 }
 
