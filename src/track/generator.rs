@@ -113,7 +113,32 @@ fn ring_speed_caps(
         .collect()
 }
 
-/// 轨迹生成主入口。points_bd 为 BD 系打卡点；不可行参数返回 `Err`。
+/// 轨迹生成模式。三种模式**相互独立**，但输出格式（Track / 27 键点集 / OBS 11 键）
+/// 完全一致，下游无需区分。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TrackGenMode {
+    /// 现有：沿闭环弧长的三谐波正弦海拔（整数周期，严格闭合）
+    #[default]
+    Current,
+    /// 碗形海拔：**两端接近水平、中段下凹**，可选叠加**起始段爬升**。
+    ///
+    /// 剖面 h(u) = base − depth·sin²(πu) + climb·sin²(π·min(u/0.25,1))·(1−u)
+    /// 其中 u = 弧长/总弧长 ∈ [0,1]：
+    /// - `sin²(πu)` 在 u=0 与 u=1 处值与一阶导数都为 0 → 起终点是平的
+    /// - 中段 u=0.5 处下凹 depth 米
+    /// - 起始爬升只在 u∈[0,0.25] 抬起，之后随 (1−u) 衰减，保证仍以水平收尾
+    ///
+    /// **配速口径与 Current 完全相同**：海拔只是视觉量，不参与速度积分，
+    /// 所以「平均配速不变」由速度曲线本身保证，总距离仍由
+    /// `∫v dt = Σ v_i·Δt_i` 的微积分核验守住（见下方 integral_dist 断言）。
+    Bowl,
+    /// Niko kinematics 口径：速度剖面的 OU 参数与限速参数取 Niko 默认值
+    /// （theta 0.12 / sigma 0.06，a_c 2.2 / brake 1.2 / lookahead 30，迭代 3 轮），
+    /// 波动比 Current 更明显、弯道收速更保守。
+    Niko,
+}
+
+/// 轨迹生成主入口（= `build_with_mode(..., TrackGenMode::Current, false)`）。
 ///
 /// `v_bounds` 为速度窗口 `(最慢, 最快)`（m/s），由用户配速范围换算而来；
 /// `None` 时沿用历史宽窗口（1.92~6.28 m/s）。
@@ -121,17 +146,48 @@ pub fn build(
     dist: f64,
     dur: i64,
     seed: u64,
+    center: (f64, f64),
+    start_ms: i64,
+    points_bd: &[(f64, f64)],
+    v_bounds: Option<(f64, f64)>,
+) -> Result<Track, String> {
+    build_with_mode(
+        dist,
+        dur,
+        seed,
+        center,
+        start_ms,
+        points_bd,
+        v_bounds,
+        TrackGenMode::Current,
+        false,
+    )
+}
+
+/// 带生成模式的入口（`Bowl` 的「起始段爬升」由 `bowl_climb` 控制）。
+pub fn build_with_mode(
+    dist: f64,
+    dur: i64,
+    seed: u64,
     _center: (f64, f64),
     start_ms: i64,
     points_bd: &[(f64, f64)],
     v_bounds: Option<(f64, f64)>,
+    mode: TrackGenMode,
+    bowl_climb: bool,
 ) -> Result<Track, String> {
     let mut rng = Rng::new(seed);
     let dur_f = dur as f64;
     let (dense, arcs, pc) = make_point_ring(points_bd);
     let (c_lat, c_lng) = pc;
     let direction: f64 = rng.choice(&[1.0, -1.0]);
-    let s0 = rng.uniform(0.0, *arcs.last().unwrap_or(&400.0));
+    // 【Bowl 模式】碗形剖面按弧长进度 u = s/总弧长 参数化，
+    // 必须从环起点（u=0）起跑，"开始水平"才成立；其它模式保持随机起跑点。
+    let s0 = if mode == TrackGenMode::Bowl {
+        0.0
+    } else {
+        rng.uniform(0.0, *arcs.last().unwrap_or(&400.0))
+    };
     let phase_v = rng.uniform(0.0, std::f64::consts::TAU);
 
     // 采样节拍：冷启动前两次 1s 快速定位，之后 5s 定时；丢点概率下调
@@ -229,6 +285,18 @@ pub fn build(
         _ => (rng.uniform(1.92, 1.98), rng.uniform(6.22, 6.28)),
     };
     let speed_seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    // 【三模式】速度剖面参数与弯道限速参数按模式取：
+    // - Current：历史上验证过的温和口径
+    // - Niko   ：OU 波动更大（theta 0.12 / sigma 0.06），弯道更保守、迭代 3 轮
+    // - Bowl   ：与 Current 完全一致（只换海拔，配速口径不得变化）
+    let (ou_theta, ou_sigma, sp_accel, sp_decel, sp_response) = match mode {
+        TrackGenMode::Niko => (0.12, 0.060, 0.60, 0.50, 0.50),
+        _ => (0.15, 0.010, 0.55, 0.45, 0.45),
+    };
+    let (ac_max, brake, lookahead, cap_rounds) = match mode {
+        TrackGenMode::Niko => (2.2, 1.2, 30.0, 3usize),
+        _ => (2.5, 1.5, 25.0, 2usize),
+    };
     let build_spec = |caps: Vec<f64>| SpeedSpec {
         dts: dts.clone(),
         target_dist: dist,
@@ -237,11 +305,11 @@ pub fn build(
         ceil: v_hi,
         caps,
         mean_mul: mean_mul.clone(),
-        theta: 0.15,
-        sigma: 0.010,
-        accel: 0.55,
-        decel: 0.45,
-        response: 0.45,
+        theta: ou_theta,
+        sigma: ou_sigma,
+        accel: sp_accel,
+        decel: sp_decel,
+        response: sp_response,
         warmup_s: 0.0,
         warmup_frac: 1.0,
         tail_s: 0.0,
@@ -249,15 +317,15 @@ pub fn build(
         seed: speed_seed,
     };
     let mut speeds = correlated_speed_profile(&build_spec(vec![v_hi; n]))?;
-    // 弯道限速：限速会改变弧长，迭代两轮收敛
-    for _ in 0..2 {
+    // 弯道限速：限速会改变弧长，迭代收敛
+    for _ in 0..cap_rounds {
         let mut s_of = vec![0.0f64; n];
         let mut acc = s0;
         for i in 0..n {
             s_of[i] = acc;
             acc += direction * speeds[i] * dts[i];
         }
-        let caps = ring_speed_caps(&dense, &arcs, &s_of, 2.5, 1.5, 25.0, v_hi);
+        let caps = ring_speed_caps(&dense, &arcs, &s_of, ac_max, brake, lookahead, v_hi);
         speeds = correlated_speed_profile(&build_spec(caps))?;
     }
     let cum_dist = cumulative(&times, &speeds, false);
@@ -345,12 +413,33 @@ pub fn build(
             rng.uniform(0.0, std::f64::consts::TAU),
         ));
     }
+    // 碗形模式的海拔参数（只有 Bowl 模式会用到，先抽样不影响其它模式）
+    let bowl_depth = rng.uniform(4.0, 12.0);
+    let bowl_climb_h = if bowl_climb { rng.uniform(2.0, 7.0) } else { 0.0 };
     let alt_at = |ss: f64| {
-        let mut v = alt_base;
-        for &(n, amp, ph) in &alt_harm {
-            v += amp * (std::f64::consts::TAU * n * ss / alt_len + ph).sin();
+        match mode {
+            TrackGenMode::Bowl => {
+                // 归一化弧长进度 u ∈ [0,1]
+                let u = (ss / alt_len).clamp(0.0, 1.0);
+                // 主碗：sin²(πu) 在 u=0/1 处值与一阶导数都为 0 → 起终点水平
+                let bowl = -(std::f64::consts::PI * u).sin().powi(2) * bowl_depth;
+                // 起始爬升：只在 u∈[0,0.25] 抬起，之后按 (1-u) 衰减，收尾仍水平
+                let climb = if bowl_climb_h > 0.0 {
+                    let x = (u / 0.25).clamp(0.0, 1.0);
+                    (std::f64::consts::PI * x).sin().powi(2) * bowl_climb_h * (1.0 - u)
+                } else {
+                    0.0
+                };
+                alt_base + bowl + climb
+            }
+            _ => {
+                let mut v = alt_base;
+                for &(n, amp, ph) in &alt_harm {
+                    v += amp * (std::f64::consts::TAU * n * ss / alt_len + ph).sin();
+                }
+                v
+            }
         }
-        v
     };
 
     for i in 0..n {
@@ -614,4 +703,90 @@ pub fn build(
         stepsPerTenSec: ten_steps,
         segments,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 约 400m 边长的三角环（BD 坐标，单位为度）
+    fn ring_pts() -> Vec<(f64, f64)> {
+        let (lat, lng) = (38.9000_f64, 121.5400_f64);
+        let dlat = 400.0 / 111_320.0;
+        let dlng = 400.0 / (111_320.0 * lat.to_radians().cos());
+        vec![(lat, lng), (lat + dlat, lng), (lat + dlat / 2.0, lng + dlng)]
+    }
+
+    /// 三种模式都能生成，且**微积分核验**成立：Σ v_i·Δt_i = 总距离，
+    /// 平均配速 = 总时长 / 总距离，落在合理区间。
+    #[test]
+    fn three_modes_keep_requested_distance_and_pace() {
+        let pts = ring_pts();
+        let (dist, dur) = (1000.0_f64, 360_i64);
+        for mode in [
+            TrackGenMode::Current,
+            TrackGenMode::Bowl,
+            TrackGenMode::Niko,
+        ] {
+            let t = build_with_mode(
+                dist,
+                dur,
+                42,
+                (38.9, 121.54),
+                1_788_958_186_123,
+                &pts,
+                None,
+                mode,
+                true,
+            )
+            .unwrap_or_else(|e| panic!("{mode:?} 生成失败: {e}"));
+            // 速度积分的末端累计必须命中目标距离（容忍 2m 采样误差）
+            assert!(
+                (t.totalDistance - dist).abs() < 2.0,
+                "{mode:?} 距离不符: 积分 {} vs 请求 {dist}",
+                t.totalDistance
+            );
+            assert_eq!(t.totalTime, dur, "{mode:?} 时长不符");
+            let pace = t.totalTime as f64 / 60.0 / (t.totalDistance / 1000.0);
+            assert!(
+                (3.0..15.0).contains(&pace),
+                "{mode:?} 平均配速异常: {pace:.2} 分/公里"
+            );
+        }
+    }
+
+    /// Bowl 模式：两端海拔接近且中段明显下凹（碗形）。
+    #[test]
+    fn bowl_altitude_has_flat_ends_and_middle_dip() {
+        let pts = ring_pts();
+        let t = build_with_mode(
+            1000.0,
+            360,
+            42,
+            (38.9, 121.54),
+            1_788_958_186_123,
+            &pts,
+            None,
+            TrackGenMode::Bowl,
+            false,
+        )
+        .expect("build");
+        let a: Vec<f64> = t.locations.iter().map(|p| p.bdA).collect();
+        let n = a.len();
+        assert!(n >= 25, "点数太少: {n}");
+        // 用分段均值抵抗 GPS 高程噪声（σ 1.6~2.8m）
+        let seg = (n / 5).max(1);
+        let mean = |r: &[f64]| r.iter().sum::<f64>() / r.len() as f64;
+        let head = mean(&a[..seg]);
+        let center = mean(&a[n / 2 - seg / 2..n / 2 + seg / 2]);
+        let tail = mean(&a[n - seg..]);
+        assert!(
+            (head - tail).abs() < 3.0,
+            "两端不水平: 头 {head:.2} 尾 {tail:.2}"
+        );
+        assert!(
+            center < head - 3.0,
+            "中段没有下落: 中 {center:.2} 头 {head:.2}"
+        );
+    }
 }
