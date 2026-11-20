@@ -428,6 +428,9 @@ impl App {
                     _ => crate::track::generator::TrackGenMode::Current,
                 },
                 bowl_climb: config.bowl_climb,
+                bowl_altitude: config
+                    .bowl_altitude
+                    .unwrap_or(config.track_gen_mode == "bowl"),
                 must_limit: config
                     .must_points_limit
                     .map(|n| n.to_string())

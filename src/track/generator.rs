@@ -162,6 +162,7 @@ pub fn build(
         v_bounds,
         TrackGenMode::Current,
         false,
+        false,
     )
 }
 
@@ -176,6 +177,8 @@ pub fn build_with_mode(
     v_bounds: Option<(f64, f64)>,
     mode: TrackGenMode,
     bowl_climb: bool,
+    /// 海拔是否使用碗形剖面（与配速独立控制；mode 只决定配速形态）
+    bowl_altitude: bool,
 ) -> Result<Track, String> {
     let mut rng = Rng::new(seed);
     let dur_f = dur as f64;
@@ -184,7 +187,7 @@ pub fn build_with_mode(
     let direction: f64 = rng.choice(&[1.0, -1.0]);
     // 【Bowl 模式】碗形剖面按弧长进度 u = s/总弧长 参数化，
     // 必须从环起点（u=0）起跑，"开始水平"才成立；其它模式保持随机起跑点。
-    let s0 = if mode == TrackGenMode::Bowl {
+    let s0 = if bowl_altitude {
         0.0
     } else {
         rng.uniform(0.0, *arcs.last().unwrap_or(&400.0))
@@ -433,28 +436,25 @@ pub fn build_with_mode(
     let bowl_depth = rng.uniform(4.0, 12.0);
     let bowl_climb_h = if bowl_climb { rng.uniform(2.0, 7.0) } else { 0.0 };
     let alt_at = |ss: f64| {
-        match mode {
-            TrackGenMode::Bowl => {
-                // 归一化弧长进度 u ∈ [0,1]
-                let u = (ss / alt_len).clamp(0.0, 1.0);
-                // 主碗：sin²(πu) 在 u=0/1 处值与一阶导数都为 0 → 起终点水平
-                let bowl = -(std::f64::consts::PI * u).sin().powi(2) * bowl_depth;
-                // 起始爬升：只在 u∈[0,0.25] 抬起，之后按 (1-u) 衰减，收尾仍水平
-                let climb = if bowl_climb_h > 0.0 {
-                    let x = (u / 0.25).clamp(0.0, 1.0);
-                    (std::f64::consts::PI * x).sin().powi(2) * bowl_climb_h * (1.0 - u)
-                } else {
-                    0.0
-                };
-                alt_base + bowl + climb
+        if bowl_altitude {
+            // 归一化弧长进度 u ∈ [0,1]
+            let u = (ss / alt_len).clamp(0.0, 1.0);
+            // 主碗：sin²(πu) 在 u=0/1 处值与一阶导数都为 0 → 起终点水平
+            let bowl = -(std::f64::consts::PI * u).sin().powi(2) * bowl_depth;
+            // 起始爬升：只在 u∈[0,0.25] 抬起，之后按 (1-u) 衰减，收尾仍水平
+            let climb = if bowl_climb_h > 0.0 {
+                let x = (u / 0.25).clamp(0.0, 1.0);
+                (std::f64::consts::PI * x).sin().powi(2) * bowl_climb_h * (1.0 - u)
+            } else {
+                0.0
+            };
+            alt_base + bowl + climb
+        } else {
+            let mut v = alt_base;
+            for &(n, amp, ph) in &alt_harm {
+                v += amp * (std::f64::consts::TAU * n * ss / alt_len + ph).sin();
             }
-            _ => {
-                let mut v = alt_base;
-                for &(n, amp, ph) in &alt_harm {
-                    v += amp * (std::f64::consts::TAU * n * ss / alt_len + ph).sin();
-                }
-                v
-            }
+            v
         }
     };
 
@@ -754,6 +754,7 @@ mod tests {
                 None,
                 mode,
                 true,
+                mode == TrackGenMode::Bowl,
             )
             .unwrap_or_else(|e| panic!("{mode:?} 生成失败: {e}"));
             // 速度积分的末端累计必须命中目标距离（容忍 2m 采样误差）
@@ -784,6 +785,7 @@ mod tests {
             &pts,
             None,
             TrackGenMode::Bowl,
+            false,
             false,
         )
         .expect("build");
@@ -820,6 +822,7 @@ mod tests {
             None,
             TrackGenMode::Bowl,
             false,
+            true,
         )
         .expect("build");
         let a: Vec<f64> = t.locations.iter().map(|p| p.bdA).collect();

@@ -57,8 +57,10 @@ pub struct RunParams {
     pub gee_window_mode: GeeWindowMode,
     /// 轨迹生成模式（Current / Bowl / Niko），仅经典模式（Legacy）生效。
     pub track_mode: TrackGenMode,
-    /// Bowl 模式是否叠加起始段爬升。
+    /// Bowl 海拔是否叠加起始段爬升。
     pub bowl_climb: bool,
+    /// 海拔是否使用碗形剖面（与配速模式独立控制）。
+    pub bowl_altitude: bool,
 }
 
 pub struct RunOutcome {
@@ -361,11 +363,12 @@ pub fn run_full_flow(
             v_bounds,
             params.track_mode,
             params.bowl_climb,
+            params.bowl_altitude,
         )?,
     };
     // 【Bowl 海拔】经典模式由 generator::build_with_mode 内部完成；
     // 路网/跑道模式的形状由路线决定，这里补一道碗形剖面覆盖。
-    if params.track_mode == TrackGenMode::Bowl && params.route_mode != RouteMode::Legacy {
+    if params.bowl_altitude && params.route_mode != RouteMode::Legacy {
         crate::track::altitude::apply_bowl_profile(&mut track, params.seed, params.bowl_climb);
         log(&format!(
             "√ [track] 碗形海拔已应用到 {} 个点（模式={:?}，起始爬升={}）",

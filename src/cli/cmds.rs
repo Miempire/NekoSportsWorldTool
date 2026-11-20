@@ -36,6 +36,7 @@ fn allowed_flags(cmd: &str) -> Option<&'static [&'static str]> {
             "must",
             "mode",
             "bowl-climb",
+            "bowl-altitude",
         ],
         "template" => &["file"],
         "ai" => &["sport", "mode", "score", "count", "minutes"],
@@ -706,6 +707,10 @@ fn cmd_run(rest: &[&str]) -> i32 {
     let bowl_climb = get(&flags, "bowl-climb")
         .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
         .unwrap_or(false);
+    // 碗形海拔：独立开关；未显式给出时跟随 --mode bowl
+    let bowl_altitude = get(&flags, "bowl-altitude")
+        .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+        .unwrap_or(track_mode == crate::track::generator::TrackGenMode::Bowl);
     if bowl_climb && track_mode != crate::track::generator::TrackGenMode::Bowl {
         eprintln!("提示：--bowl-climb 只在 --mode bowl 下生效，当前已忽略");
     }
@@ -727,6 +732,7 @@ fn cmd_run(rest: &[&str]) -> i32 {
         gee_window_mode: crate::api::flow::GeeWindowMode::default(),
         track_mode,
         bowl_climb: bowl_climb && track_mode == crate::track::generator::TrackGenMode::Bowl,
+        bowl_altitude,
     };
     match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
         Ok(out) => {

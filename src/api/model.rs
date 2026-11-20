@@ -90,9 +90,12 @@ pub struct Config {
     /// 轨迹生成模式：current（默认）/ bowl / niko。
     #[serde(default = "default_track_gen_mode")]
     pub track_gen_mode: String,
-    /// Bowl 模式是否叠加起始段爬升。
+    /// Bowl 海拔是否叠加起始段爬升。
     #[serde(default)]
     pub bowl_climb: bool,
+    /// 海拔是否碗形；None = 未设置，跟随配速模式（bowl 时为 true）。
+    #[serde(default)]
+    pub bowl_altitude: Option<bool>,
 }
 
 fn default_track_gen_mode() -> String {
@@ -145,6 +148,7 @@ impl Default for Config {
             gee_window_real: false,
             track_gen_mode: default_track_gen_mode(),
             bowl_climb: false,
+            bowl_altitude: None,
         }
     }
 }

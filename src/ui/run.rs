@@ -90,8 +90,10 @@ pub struct RunPage {
     pub gee_window_real: bool,
     /// 轨迹生成模式（仅经典模式 Legacy 生效）。
     pub track_gen_mode: crate::track::generator::TrackGenMode,
-    /// Bowl 模式是否叠加起始段爬升。
+    /// Bowl 海拔是否叠加起始段爬升。
     pub bowl_climb: bool,
+    /// 海拔是否碗形（与配速模式独立）。
+    pub bowl_altitude: bool,
     /// 预计算方案：参数变更时重抽样，提交直接使用
     pub plan: Option<RunPlan>,
     /// 路线算法模式
@@ -535,13 +537,13 @@ impl App {
                     ui.colored_label(theme::warn(), "（需先在「路网」页导入 OSM）");
                 }
             });
-            // 数据生成模式：三种路线算法下都生效
-            // - 经典模式：海拔剖面 + 速度参数（Bowl 还会固定从环起点起跑）
-            // - 路网/跑道：只覆盖海拔剖面，形状仍由路线决定
+            // 数据生成：**配速模式**与**海拔剖面**分开控制
+            // - 配速：现有(疲劳) / 碗形(两端慢中间快) / Niko(大波动弯道保守)
+            // - 海拔：普通三谐波 / 碗形(中间下凹)，两种路线算法都生效
             {
                 let mode_before = page.track_gen_mode;
                 mobile::row(ui, |ui| {
-                    ui.label("数据生成：");
+                    ui.label("配速：");
                     ui.selectable_value(
                         &mut page.track_gen_mode,
                         crate::track::generator::TrackGenMode::Current,
@@ -550,7 +552,7 @@ impl App {
                     ui.selectable_value(
                         &mut page.track_gen_mode,
                         crate::track::generator::TrackGenMode::Bowl,
-                        "碗形海拔",
+                        "碗形",
                     );
                     ui.selectable_value(
                         &mut page.track_gen_mode,
@@ -558,24 +560,28 @@ impl App {
                         "Niko",
                     );
                 });
-                // 换模式会改变轨迹形状与起跑点（Bowl 固定从环起点起跑）→ 预览必须重算
-                if page.track_gen_mode != mode_before {
+                let alt_before = page.bowl_altitude;
+                let climb_before = page.bowl_climb;
+                mobile::row(ui, |ui| {
+                    ui.checkbox(&mut page.bowl_altitude, "碗形海拔");
+                    if page.bowl_altitude {
+                        ui.checkbox(&mut page.bowl_climb, "起始段先爬升");
+                    }
+                });
+                if page.track_gen_mode != mode_before
+                    || page.bowl_altitude != alt_before
+                    || page.bowl_climb != climb_before
+                {
+                    // 换形状/换起跑点 → 预览必须重算
                     page.preview_stale = true;
                 }
-                if page.track_gen_mode == crate::track::generator::TrackGenMode::Bowl {
-                    let climb_before = page.bowl_climb;
-                    mobile::row(ui, |ui| {
-                        ui.checkbox(&mut page.bowl_climb, "起始段先爬升");
-                        ui.small("海拔：中间下凹；配速：两端慢、中间快；起终点都平");
-                    });
-                    if page.bowl_climb != climb_before {
-                        page.preview_stale = true;
-                    }
+                if page.bowl_altitude && page.bowl_climb {
+                    ui.small("海拔：中间下凹 + 起始爬升；起终点都是平的");
+                } else if page.bowl_altitude {
+                    ui.small("海拔：两端水平、中间下凹");
                 }
-                if page.route_mode != RouteMode::Legacy
-                    && page.track_gen_mode != crate::track::generator::TrackGenMode::Current
-                {
-                    ui.small("路网/跑道模式下只覆盖海拔剖面；配速由路线曲率决定");
+                if page.route_mode != RouteMode::Legacy {
+                    ui.small("路网/跑道：只覆盖海拔剖面，配速由路线曲率决定");
                 }
             }
         }
@@ -1320,12 +1326,14 @@ impl App {
         // 轨迹生成模式同样先落成 Copy 值
         let track_mode = page.track_gen_mode;
         let bowl_climb = page.bowl_climb;
+        let bowl_altitude = page.bowl_altitude;
         self.config.track_gen_mode = match track_mode {
             crate::track::generator::TrackGenMode::Bowl => "bowl".into(),
             crate::track::generator::TrackGenMode::Niko => "niko".into(),
             crate::track::generator::TrackGenMode::Current => "current".into(),
         };
         self.config.bowl_climb = bowl_climb;
+        self.config.bowl_altitude = Some(bowl_altitude);
         self.config.manual_altitude = manual_altitude;
         self.config.manual_altitude_range = manual_altitude_range;
         self.config.route_mode = match route_mode {
@@ -1364,6 +1372,7 @@ impl App {
                 gee_window_mode,
                 track_mode,
                 bowl_climb,
+                bowl_altitude,
             };
             let payload = match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
                 Ok(out) => {
