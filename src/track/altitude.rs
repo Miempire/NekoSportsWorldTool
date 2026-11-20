@@ -6,7 +6,7 @@
 
 #![allow(non_snake_case)]
 
-use super::geom::round_to;
+use super::geom::{round_to, Rng};
 use super::model::Track;
 
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -109,6 +109,45 @@ pub fn override_bd_a_range(track: &mut Track, range: AltitudeRange) -> Result<()
     Ok(())
 }
 
+/// 碗形海拔剖面：h(u) = base − depth·sin²(πu) + climb·sin²(π·min(u/0.25,1))·(1−u)
+///
+/// `u` = 点序号 / (点数−1) ∈ [0,1]（近似距离进度）：
+/// - `sin²(πu)` 在 u=0 与 u=1 处值与一阶导数都为 0 → **起终点水平**
+/// - 中段 u=0.5 处下凹 `depth`（4~12 m）
+/// - `climb_enabled` 时在起始 25% 叠加 2~7 m 爬升，随后按 (1−u) 衰减，收尾仍水平
+///
+/// 供 Road / Track 模式使用（经典模式由 `generator::build_with_mode` 内部完成）。
+/// 直接覆盖 `bdA`，下游 totalAscent、OBS run_data、每圈 elevationGain 读的都是这一份。
+pub fn apply_bowl_profile(track: &mut Track, seed: u64, climb_enabled: bool) {
+    let n = track.locations.len();
+    if n == 0 {
+        return;
+    }
+    // 基准取现有海拔均值，保持与该路线原本所处高度一致
+    let base = track.locations.iter().map(|p| p.bdA).sum::<f64>() / n as f64;
+    let mut rng = Rng::new(seed ^ 0x9E37_79B9_7F4A_7C15);
+    let depth = rng.uniform(4.0, 12.0);
+    let climb_h = if climb_enabled {
+        rng.uniform(2.0, 7.0)
+    } else {
+        0.0
+    };
+    let noise = rng.uniform(1.6, 2.8);
+    let denom = (n - 1).max(1) as f64;
+    for (i, p) in track.locations.iter_mut().enumerate() {
+        let u = i as f64 / denom;
+        let bowl = -(std::f64::consts::PI * u).sin().powi(2) * depth;
+        let climb = if climb_h > 0.0 {
+            let x = (u / 0.25).clamp(0.0, 1.0);
+            (std::f64::consts::PI * x).sin().powi(2) * climb_h * (1.0 - u)
+        } else {
+            0.0
+        };
+        p.bdA = round_to(base + bowl + climb + rng.gauss(0.0, noise), 2);
+        p.hasAltitude = true;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,5 +188,23 @@ mod tests {
             .expect("build");
         override_bd_a_range(&mut track, AltitudeRange { min_m: 11.6, max_m: 22.8 }).unwrap();
         assert!(track.locations.iter().all(|p| (11.6..=22.8).contains(&p.bdA)));
+    }
+
+    /// 碗形剖面：两端水平、中段下凹（供路网/跑道模式复用）。
+    #[test]
+    fn bowl_profile_has_flat_ends_and_middle_dip() {
+        let mut track = build(1200.0, 600, 7, (38.9, 121.54), 1_700_000_000_000, &points(), None)
+            .expect("build");
+        apply_bowl_profile(&mut track, 7, false);
+        let a: Vec<f64> = track.locations.iter().map(|p| p.bdA).collect();
+        let n = a.len();
+        assert!(n >= 25, "点数太少: {n}");
+        let seg = (n / 5).max(1);
+        let mean = |r: &[f64]| r.iter().sum::<f64>() / r.len() as f64;
+        let head = mean(&a[..seg]);
+        let center = mean(&a[n / 2 - seg / 2..n / 2 + seg / 2]);
+        let tail = mean(&a[n - seg..]);
+        assert!((head - tail).abs() < 3.0, "两端不水平: 头 {head:.2} 尾 {tail:.2}");
+        assert!(center < head - 3.0, "中段没有下凹: 中 {center:.2} 头 {head:.2}");
     }
 }

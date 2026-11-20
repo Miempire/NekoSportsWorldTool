@@ -535,9 +535,10 @@ impl App {
                     ui.colored_label(theme::warn(), "（需先在「路网」页导入 OSM）");
                 }
             });
-            // 数据生成模式：**只对经典打卡点环生效**。
-            // 路网/跑道模式的形状由路线本身决定，这里不再显示可选按钮（避免选了没反应）。
-            if page.route_mode == RouteMode::Legacy {
+            // 数据生成模式：三种路线算法下都生效
+            // - 经典模式：海拔剖面 + 速度参数（Bowl 还会固定从环起点起跑）
+            // - 路网/跑道：只覆盖海拔剖面，形状仍由路线决定
+            {
                 let mode_before = page.track_gen_mode;
                 mobile::row(ui, |ui| {
                     ui.label("数据生成：");
@@ -571,8 +572,11 @@ impl App {
                         page.preview_stale = true;
                     }
                 }
-            } else {
-                ui.small("数据生成：仅对「经典打卡点环」生效，当前路线由所选路网/跑道决定");
+                if page.route_mode != RouteMode::Legacy
+                    && page.track_gen_mode != crate::track::generator::TrackGenMode::Current
+                {
+                    ui.small("路网/跑道模式下只覆盖海拔剖面，轨迹形状由路线决定");
+                }
             }
         }
 

@@ -363,6 +363,17 @@ pub fn run_full_flow(
             params.bowl_climb,
         )?,
     };
+    // 【Bowl 海拔】经典模式由 generator::build_with_mode 内部完成；
+    // 路网/跑道模式的形状由路线决定，这里补一道碗形剖面覆盖。
+    if params.track_mode == TrackGenMode::Bowl && params.route_mode != RouteMode::Legacy {
+        crate::track::altitude::apply_bowl_profile(&mut track, params.seed, params.bowl_climb);
+        log(&format!(
+            "√ [track] 碗形海拔已应用到 {} 个点（模式={:?}，起始爬升={}）",
+            track.locations.len(),
+            params.route_mode,
+            params.bowl_climb
+        ));
+    }
     if let Some(range) = params.manual_altitude_range {
         crate::track::altitude::override_bd_a_range(&mut track, range)?;
         log(&format!(
