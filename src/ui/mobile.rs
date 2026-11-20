@@ -81,30 +81,36 @@ pub fn tab_bar(ui: &mut egui::Ui, selected: &mut usize) -> Vec<egui::Response> {
     let compact = compact_ui(ui);
     let mut responses = Vec::with_capacity(TABS.len());
     if compact {
+        // 【布局优化】手机窄屏：10 个标签改为「单行横向滚动」，
+        // 原来 4 列换行会占 3 行（≈150px），把下面的参数区挤得几乎没有空间。
         let spacing = ui.spacing().item_spacing.x;
-        let width = ((ui.available_width() - spacing * 3.0) / 4.0).max(68.0);
-        ui.horizontal_wrapped(|ui| {
-            for (index, label) in TABS.into_iter().enumerate() {
-                let active = *selected == index;
-                let response = ui.add_sized(
-                    [width, TOUCH_HEIGHT],
-                    super::theme::tab_button(active, label),
-                );
-                if active {
-                    super::theme::paint_tab_accent(ui, response.rect);
-                } else if response.hovered() {
-                    ui.painter().rect_stroke(
-                        response.rect,
-                        egui::Rounding::same(3.0),
-                        egui::Stroke::new(1.0_f32, super::theme::accent_dim()),
-                    );
-                }
-                if response.clicked() {
-                    *selected = index;
-                }
-                responses.push(response);
-            }
-        });
+        let width = 76.0_f32.max(spacing);
+        egui::ScrollArea::horizontal()
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    for (index, label) in TABS.into_iter().enumerate() {
+                        let active = *selected == index;
+                        let response = ui.add_sized(
+                            [width, TOUCH_HEIGHT],
+                            super::theme::tab_button(active, label),
+                        );
+                        if active {
+                            super::theme::paint_tab_accent(ui, response.rect);
+                        } else if response.hovered() {
+                            ui.painter().rect_stroke(
+                                response.rect,
+                                egui::Rounding::same(3.0),
+                                egui::Stroke::new(1.0_f32, super::theme::accent_dim()),
+                            );
+                        }
+                        if response.clicked() {
+                            *selected = index;
+                        }
+                        responses.push(response);
+                    }
+                });
+            });
     } else {
         // 10 个标签在窄桌面窗口会超宽，用换行排版保证不出界。
         ui.horizontal_wrapped(|ui| {

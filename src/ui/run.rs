@@ -368,6 +368,11 @@ impl App {
     }
 
     fn draw_run_content(&mut self, ui: &mut egui::Ui) {
+        // 【布局优化】手机上行与行之间默认 4px 太紧，参数区读起来糊成一团。
+        // 只在本页局部加大纵向间距，桌面端与其它页面不受影响。
+        if mobile::compact_ui(ui) {
+            ui.spacing_mut().item_spacing.y = 8.0;
+        }
         let prev_route = self.run_page.route_mode;
         {
             let page = &mut self.run_page;
@@ -441,7 +446,7 @@ impl App {
                     crate::platform::InputKind::Text,
                     120.0,
                 );
-                ui.label("留空自动；可填 17.2 或 11.6-22.8");
+                ui.small("留空自动；可填 17.2 或 11.6-22.8");
             });
             mobile::row(ui, |ui| {
                 ui.label("开始时间：");
@@ -457,7 +462,7 @@ impl App {
                         }
                     });
                 if page.start_mode == 0 {
-                    ui.label(format!("（{RAND_HOUR_LO}:00-{RAND_HOUR_HI}:00 内随机）"));
+                    ui.small(format!("（{RAND_HOUR_LO}:00-{RAND_HOUR_HI}:00 内随机）"));
                 } else {
                     ui.label("时刻：");
                     mobile::drag_i64(ui, "run_hour", &mut page.hour, 0..=23, 1.0, "", " 点");
@@ -487,30 +492,36 @@ impl App {
                     }
                 }
             }
-            mobile::row(ui, |ui| {
-                ui.label("人脸校验标记：");
-                ui.checkbox(&mut page.face_check, "faceCheck=1");
-            });
-            mobile::row(ui, |ui| {
-                ui.label("必经点数量：");
-                let before = page.must_limit.clone();
-                mobile::text_edit(
-                    ui,
-                    "run_must_limit",
-                    &mut page.must_limit,
-                    crate::platform::InputKind::Text,
-                    120.0,
-                );
-                if page.must_limit != before {
-                    page.preview_stale = true;
-                }
-                ui.label("留空=全部；0=不经过");
-            });
-            mobile::row(ui, |ui| {
-                ui.label("极验回执窗口：");
-                ui.radio_value(&mut page.gee_window_real, false, "固定 60s（提交快）");
-                ui.radio_value(&mut page.gee_window_real, true, "真实 totalTime（最像真机）");
-            });
+            // 【布局优化】这三项都是调试/边缘参数，手机上默认折叠，
+            // 避免把首屏参数区挤得没有空间。
+            egui::CollapsingHeader::new("高级选项（人脸校验 / 必经点 / 极验回执）")
+                .default_open(false)
+                .show(ui, |ui| {
+                    mobile::row(ui, |ui| {
+                        ui.label("人脸校验标记：");
+                        ui.checkbox(&mut page.face_check, "faceCheck=1");
+                    });
+                    mobile::row(ui, |ui| {
+                        ui.label("必经点数量：");
+                        let before = page.must_limit.clone();
+                        mobile::text_edit(
+                            ui,
+                            "run_must_limit",
+                            &mut page.must_limit,
+                            crate::platform::InputKind::Text,
+                            120.0,
+                        );
+                        if page.must_limit != before {
+                            page.preview_stale = true;
+                        }
+                        ui.small("留空=全部；0=不经过");
+                    });
+                    mobile::row(ui, |ui| {
+                        ui.label("极验回执窗口：");
+                        ui.radio_value(&mut page.gee_window_real, false, "固定 60s");
+                        ui.radio_value(&mut page.gee_window_real, true, "真实 totalTime");
+                    });
+                });
             ui.horizontal(|ui| {
                 ui.label("路线算法：");
                 ui.selectable_value(&mut page.route_mode, RouteMode::Legacy, "经典打卡点环");
