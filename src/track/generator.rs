@@ -120,17 +120,18 @@ pub enum TrackGenMode {
     /// 现有：沿闭环弧长的三谐波正弦海拔（整数周期，严格闭合）
     #[default]
     Current,
-    /// 碗形海拔：**两端接近水平、中段下凹**，可选叠加**起始段爬升**。
+    /// 碗形海拔 + 碗形配速：**两端接近水平/基准、中段下凹（海拔）或加快（配速）**，
+    /// 可选叠加**起始段爬升**。
     ///
-    /// 剖面 h(u) = base − depth·sin²(πu) + climb·sin²(π·min(u/0.25,1))·(1−u)
-    /// 其中 u = 弧长/总弧长 ∈ [0,1]：
+    /// 海拔剖面 h(u) = base − depth·sin²(πu) + climb·sin²(π·min(u/0.25,1))·(1−u)
+    /// 配速趋势 m(u) = 1 + depth_v·sin²(πu)（两端 1.0、中段 1+depth_v）
+    /// 其中 u = 弧长（海拔）/ 时间（配速）进度 ∈ [0,1]：
     /// - `sin²(πu)` 在 u=0 与 u=1 处值与一阶导数都为 0 → 起终点是平的
-    /// - 中段 u=0.5 处下凹 depth 米
+    /// - 海拔中段 u=0.5 处下凹 depth 米；配速中段比两端快 depth_v（10~22%）
     /// - 起始爬升只在 u∈[0,0.25] 抬起，之后随 (1−u) 衰减，保证仍以水平收尾
     ///
-    /// **配速口径与 Current 完全相同**：海拔只是视觉量，不参与速度积分，
-    /// 所以「平均配速不变」由速度曲线本身保证，总距离仍由
-    /// `∫v dt = Σ v_i·Δt_i` 的微积分核验守住（见下方 integral_dist 断言）。
+    /// **总距离/平均配速不变**：碗形只改趋势形状，`correlated_speed_profile`
+    /// 仍会二分命中目标距离，末端 `∫v dt = Σ v_i·Δt_i` 的微积分核验照旧守住。
     Bowl,
     /// Niko kinematics 口径：速度剖面的 OU 参数与限速参数取 Niko 默认值
     /// （theta 0.12 / sigma 0.06，a_c 2.2 / brake 1.2 / lookahead 30，迭代 3 轮），
@@ -243,7 +244,12 @@ pub fn build_with_mode(
     let mut rec = 0.0f64;
     let mut rel_ema = 1.0f64;
     let base = dist / dur_f;
-    // 速度均值倍率：热身 ramp × 疲劳（含回拨）× 四正弦波动 × 余弦凹陷
+    // 【Bowl 配速】碗形速度曲线：两端接近基准、中段加快（与碗形海拔同形）
+    // u=0/1 处 sin²(πu)=0 → 1.0；u=0.5 处 → 1+depth
+    let bowl_speed_depth = rng.uniform(0.10, 0.22);
+    // 速度均值倍率：
+    // - Current/Niko：热身 ramp × 疲劳（含回拨）× 四正弦波动 × 余弦凹陷
+    // - Bowl        ：热身 ramp × **碗形趋势** × 四正弦波动 × 余弦凹陷
     // （不含白噪声，随机部分统一由 profile 的相关目标 + 一阶响应给出）
     let mut mean_mul = Vec::with_capacity(n);
     for (i, &tt) in times.iter().enumerate() {
@@ -253,30 +259,40 @@ pub fn build_with_mode(
         } else {
             1.0
         };
-        let km_done = (tt / dur_f) * dist / 1000.0;
-        let fatigue = if km_done <= 0.5 {
-            fat0
-        } else {
-            (fat0 - fat_slope * (km_done - 0.5)).max(fat_min)
-        };
         let wave = (1.0
             + wa1 * (std::f64::consts::TAU * tt / wp1 + phase_v).sin()
             + wa2 * (std::f64::consts::TAU * tt / wp2 + phase_v * 2.3).sin()
             + wa3 * (std::f64::consts::TAU * tt / wp3 + phase_v * 3.7).sin()
             + wa4 * (std::f64::consts::TAU * tt / wp4 + phase4).sin())
             * dip_factor(tt);
-        // 回拨状态：相对配速经 ~12s EMA 平滑后比趋势慢 1% 起缓释，慢 4% 达到上限
-        // （瞬时波形会被短周期噪声打散，平滑后才能识别「持续跑慢」这一段）。
-        let rel_alpha = 1.0 - (-dt / 12.0).exp();
-        rel_ema += (wave - rel_ema) * rel_alpha;
-        let slow = (1.0 - rel_ema).max(0.0);
-        let rec_tgt = rec_max * ((slow - 0.01) / 0.03).clamp(0.0, 1.0);
-        let k = if rec_tgt > rec { 1.0 / rec_tau } else { 1.0 / (2.5 * rec_tau) };
-        rec += (rec_tgt - rec) * (1.0 - (-k * dt).exp());
-        // 回拨量按「疲劳负债」折算回起点状态 fat0（而非折算到 1.0）：
-        // 起点乘数 fat0 > 1，若折向 1.0 会出现「恢复后比刚开跑还快」的反向偏差。
-        let fatigue_eff = fat0 - (fat0 - fatigue) * (1.0 - rec);
-        mean_mul.push(ramp * fatigue_eff * wave);
+        let trend = if mode == TrackGenMode::Bowl {
+            // 碗形：中段比两端快 bowl_speed_depth（两端保持 1.0）
+            let u = (tt / dur_f).clamp(0.0, 1.0);
+            1.0 + bowl_speed_depth * (std::f64::consts::PI * u).sin().powi(2)
+        } else {
+            let km_done = (tt / dur_f) * dist / 1000.0;
+            let fatigue = if km_done <= 0.5 {
+                fat0
+            } else {
+                (fat0 - fat_slope * (km_done - 0.5)).max(fat_min)
+            };
+            // 回拨状态：相对配速经 ~12s EMA 平滑后比趋势慢 1% 起缓释，慢 4% 达到上限
+            // （瞬时波形会被短周期噪声打散，平滑后才能识别「持续跑慢」这一段）。
+            let rel_alpha = 1.0 - (-dt / 12.0).exp();
+            rel_ema += (wave - rel_ema) * rel_alpha;
+            let slow = (1.0 - rel_ema).max(0.0);
+            let rec_tgt = rec_max * ((slow - 0.01) / 0.03).clamp(0.0, 1.0);
+            let k = if rec_tgt > rec {
+                1.0 / rec_tau
+            } else {
+                1.0 / (2.5 * rec_tau)
+            };
+            rec += (rec_tgt - rec) * (1.0 - (-k * dt).exp());
+            // 回拨量按「疲劳负债」折算回起点状态 fat0（而非折算到 1.0）：
+            // 起点乘数 fat0 > 1，若折向 1.0 会出现「恢复后比刚开跑还快」的反向偏差。
+            fat0 - (fat0 - fatigue) * (1.0 - rec)
+        };
+        mean_mul.push(ramp * trend * wave);
     }
     // 逐点速度约束在有效配速窗口内侧；优先用用户配速范围换算的窗口，
     // 未提供时按次抽样，避免固定钳制值形成平顶。
@@ -286,9 +302,9 @@ pub fn build_with_mode(
     };
     let speed_seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
     // 【三模式】速度剖面参数与弯道限速参数按模式取：
-    // - Current：历史上验证过的温和口径
+    // - Current：历史上验证过的温和口径（疲劳降速 + 波动）
     // - Niko   ：OU 波动更大（theta 0.12 / sigma 0.06），弯道更保守、迭代 3 轮
-    // - Bowl   ：与 Current 完全一致（只换海拔，配速口径不得变化）
+    // - Bowl   ：OU 参数同 Current，但趋势项换成**碗形**（两端慢、中间快）
     let (ou_theta, ou_sigma, sp_accel, sp_decel, sp_response) = match mode {
         TrackGenMode::Niko => (0.12, 0.060, 0.60, 0.50, 0.50),
         _ => (0.15, 0.010, 0.55, 0.45, 0.45),
@@ -753,6 +769,41 @@ mod tests {
                 "{mode:?} 平均配速异常: {pace:.2} 分/公里"
             );
         }
+    }
+
+    /// Bowl 模式：配速也是碗形 —— 中段平均速度高于两端。
+    #[test]
+    fn bowl_speed_is_faster_in_the_middle() {
+        let pts = ring_pts();
+        let t = build_with_mode(
+            1200.0,
+            420,
+            11,
+            (38.9, 121.54),
+            1_788_958_186_123,
+            &pts,
+            None,
+            TrackGenMode::Bowl,
+            false,
+        )
+        .expect("build");
+        let v: Vec<f64> = t.locations.iter().map(|p| p.speed).collect();
+        let n = v.len();
+        assert!(n >= 25, "点数太少: {n}");
+        let seg = (n / 5).max(1);
+        let mean = |r: &[f64]| r.iter().sum::<f64>() / r.len() as f64;
+        let head = mean(&v[..seg]);
+        let center = mean(&v[n / 2 - seg / 2..n / 2 + seg / 2]);
+        let tail = mean(&v[n - seg..]);
+        // 中段应明显快于两端（碗形深度 10~22%，留足噪声余量）
+        assert!(
+            center > head * 1.03,
+            "中段没有加快: 中 {center:.2} 头 {head:.2}"
+        );
+        assert!(
+            center > tail * 1.03,
+            "中段没有加快: 中 {center:.2} 尾 {tail:.2}"
+        );
     }
 
     /// Bowl 模式：两端海拔接近且中段明显下凹（碗形）。

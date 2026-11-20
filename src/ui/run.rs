@@ -566,7 +566,7 @@ impl App {
                     let climb_before = page.bowl_climb;
                     mobile::row(ui, |ui| {
                         ui.checkbox(&mut page.bowl_climb, "起始段先爬升");
-                        ui.small("关掉则只在中间下凹；起终点都是平的");
+                        ui.small("海拔：中间下凹；配速：两端慢、中间快；起终点都平");
                     });
                     if page.bowl_climb != climb_before {
                         page.preview_stale = true;
@@ -575,7 +575,7 @@ impl App {
                 if page.route_mode != RouteMode::Legacy
                     && page.track_gen_mode != crate::track::generator::TrackGenMode::Current
                 {
-                    ui.small("路网/跑道模式下只覆盖海拔剖面，轨迹形状由路线决定");
+                    ui.small("路网/跑道模式下只覆盖海拔剖面；配速由路线曲率决定");
                 }
             }
         }
