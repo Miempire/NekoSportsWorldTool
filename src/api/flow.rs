@@ -389,6 +389,41 @@ pub fn run_full_flow(
     let five = five_point_wrapper_with_area(&pts, track.startTime, &area, Some(&track));
     let _ = &five;
 
+    // ④.5 极验设备回执（deviceVerify）
+    //
+    // 【真机实测】官方在 `requestFivePoint` 的 onSuccess 里立刻上报这一次，
+    // 那一刻记录还没生成，所以 body 里**没有 rrid**（对应本函数 rrid 传 -1），
+    // 有 uuid 则带上。实测请求落在记录 startTime 前约 20 秒（起跑时），
+    // 而不是提交之后 —— 旧实现放在提交后是错的。
+    //
+    // 目标主机：`partner.iydsj.com`（不是 run.gxapp 域名）。
+    // geeToken 优先取 MRT_GEE_TOKEN（外部注入的 DeepKnow 回执），
+    // 没有就退回本次起跑的 scene=4 回执。
+    if std::env::var("MRT_DEVICE_VERIFY").ok().as_deref() == Some("1") {
+        let injected = std::env::var("MRT_GEE_TOKEN").unwrap_or_default();
+        let gee = if injected.trim().is_empty() {
+            start_receipt.0.clone()
+        } else {
+            injected.trim().to_string()
+        };
+        if gee.is_empty() {
+            log("⚠ [deviceverify] 无可用 geeToken（MRT_GEE_TOKEN 为空且未开启 geetoken），跳过");
+        } else {
+            let code = crate::geetoken::code_for_token(&gee);
+            log(&format!("[deviceverify] 起跑后上报设备回执（errorCode={code}）…"));
+            match super::deviceverify::device_verify(
+                client,
+                &gee,
+                -1,
+                Some(run_uuid.as_str()),
+                code,
+            ) {
+                Ok(_) => log("√ [deviceverify] 上报成功"),
+                Err(e) => log(&format!("⚠ [deviceverify] 上报失败: {e}")),
+            }
+        }
+    }
+
     // ⑤ 提交（sportType=1）
     log("[record] 提交跑步记录（sportType=1）…");
     // scene=6 按检查点顺序在压缩窗口内按比例发；scene=7 最后发，用于提交体。
@@ -499,26 +534,6 @@ pub fn run_full_flow(
     // ⑥ 提交跑步记录（OBS 已就位，服务端按 uuid 取轨迹）
     let result = submit_record(client, &sp, log)?;
     sleep_secs(1);
-
-    // ⑥.5 极验回执（官方在 requestFivePoint.onSuccess 后上报；默认不发）
-    if std::env::var("MRT_DEVICE_VERIFY").ok().as_deref() == Some("1") {
-        match std::env::var("MRT_GEE_TOKEN") {
-            Ok(token) if !token.trim().is_empty() => {
-                log("[deviceverify] 上报极验回执…");
-                match super::deviceverify::device_verify(
-                    client,
-                    token.trim(),
-                    result.rrid,
-                    Some(result.uuid.as_str()),
-                    0,
-                ) {
-                    Ok(_) => log("√ [deviceverify] 上报成功"),
-                    Err(e) => log(&format!("⚠ [deviceverify] 上报失败: {e}")),
-                }
-            }
-            _ => log("⚠ [deviceverify] 已开启但未提供 MRT_GEE_TOKEN，跳过"),
-        }
-    }
 
     // ⑦ 详情验证
     sleep_secs(2);
