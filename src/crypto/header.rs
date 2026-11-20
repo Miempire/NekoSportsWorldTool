@@ -122,11 +122,48 @@ impl HeaderIdentity {
         }
     }
 
+    /// 更新时间：按 device_id 派生一个**稳定但每台设备不同**的延迟（1~60 天）。
+    ///
+    /// 之前写死 `install + 26.8 天`（真机单一样本），所有设备更新延迟完全一致，
+    /// 是很容易被聚类的指纹。改成由 device_id 哈希派生：
+    /// 同一设备恒定为同一个值（跨请求零漂移），不同设备各不相同。
+    pub fn update_time(&self, ts: i64) -> i64 {
+        let delay = if ANDROID_UPDATE_DELAY_RANDOMIZED {
+            update_delay_for(&self.device_id)
+        } else {
+            ANDROID_UPDATE_DELAY_MS
+        };
+        self.install_time(ts) + delay
+    }
+
     /// 按平台生成一份新的安装时间（设备随机化时调用）。
+    ///
+    /// 之前固定 `now − 90 天`：所有新建设备的安装时间都精确落在同一天数上，
+    /// 服务端按 appInstallTime 聚类一眼就能看出是批量生成。改为 30~400 天随机
+    /// （iOS 1~7 天）。
     pub fn fresh_install_time(platform: &str) -> i64 {
-        let days = if platform == "android" { 90 } else { 3 };
+        let r = rand::random::<u64>();
+        let days = if platform == "android" {
+            30 + (r % 371) as i64 // 30..=400
+        } else {
+            1 + (r % 7) as i64 // 1..=7
+        };
         now_ms() - days * 86_400_000
     }
+}
+
+/// 是否启用随机化的更新延迟（关掉可回到旧的固定 26.8 天）。
+pub const ANDROID_UPDATE_DELAY_RANDOMIZED: bool = true;
+
+/// 由 device_id 派生 1~60 天的更新延迟（FNV-1a，保证同设备恒定）。
+fn update_delay_for(device_id: &str) -> i64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in device_id.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let days = 1 + (h % 60) as i64; // 1..=60
+    days * 86_400_000
 }
 
 impl Default for HeaderIdentity {
@@ -256,7 +293,7 @@ pub fn build_android_header(
     let device_id = android_device_id(&identity.device_id);
     let ts = timestamp_ms.unwrap_or_else(now_ms);
     let install = identity.install_time(ts);
-    let update = install + ANDROID_UPDATE_DELAY_MS;
+    let update = identity.update_time(ts);
 
     m.insert("Accept".into(), serde_json::Value::String("application/json".into()));
     m.insert("Content-Type".into(), serde_json::Value::String("application/json".into()));
@@ -372,7 +409,10 @@ mod tests {
         assert!(v.get("studentId").is_none());
         let install = 1788958186123i64 - 90 * 86_400_000;
         assert_eq!(v["appInstallTime"], install.to_string());
-        assert_eq!(v["appUpdateTime"], (install + ANDROID_UPDATE_DELAY_MS).to_string());
+        // 更新延迟改为按 device_id 派生（1~60 天，同设备恒定）
+        let delay = update_delay_for(&identity.device_id);
+        assert!((1..=60).contains(&(delay / 86_400_000)), "延迟应在 1~60 天: {delay}");
+        assert_eq!(v["appUpdateTime"], (install + delay).to_string());
         assert_eq!(v.as_object().unwrap().len(), 23);
         let nonce = v["nonce"].as_str().unwrap();
         assert_eq!(nonce, nonce.to_lowercase());
@@ -390,15 +430,16 @@ mod tests {
         let v2: serde_json::Value = serde_json::from_str(&j2).unwrap();
         assert_eq!(v1["appInstallTime"], v2["appInstallTime"]);
         assert_eq!(v1["appInstallTime"], 1_700_000_000_000_i64);
-        // Android 安装/更新时间同样稳定，且 update 恒比 install 晚 26.8 天
+        // Android 安装/更新时间同样稳定；update 的延迟由 device_id 派生（同设备恒定）
         let (a1, _) = build_android_header(&identity, 1, "T", Some(1788958186123));
         let (a2, _) = build_android_header(&identity, 1, "T", Some(1788958190000));
         let a1: serde_json::Value = serde_json::from_str(&a1).unwrap();
         let a2: serde_json::Value = serde_json::from_str(&a2).unwrap();
         assert_eq!(a1["appInstallTime"], "1700000000000");
         assert_eq!(a2["appInstallTime"], "1700000000000");
-        assert_eq!(a1["appUpdateTime"], "1702315520000");
-        assert_eq!(a2["appUpdateTime"], "1702315520000");
+        let d = update_delay_for("");
+        assert_eq!(a1["appUpdateTime"], (1_700_000_000_000_i64 + d).to_string());
+        assert_eq!(a2["appUpdateTime"], a1["appUpdateTime"]);
         // 身份未持久化安装时间时，回退值在同一请求内至少自洽
         let fallback = HeaderIdentity::default();
         assert_eq!(fallback.install_time(1000), 1000 - 3 * 86_400_000);
