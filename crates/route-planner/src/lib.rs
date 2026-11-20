@@ -28,7 +28,7 @@ pub use graph::{
     point_in_polygon, segment_intersects_polygon, segments_intersect, Coord, RoadGraph, TrackWay,
 };
 pub use kinematics::{pace_profile, pace_profile_with_mul, speed_limit_ahead, KinParams};
-pub use load::{load_osm, parse_osm};
+pub use load::{load_auto, load_osm, parse_json, parse_osm};
 pub use noise::{ar1_xy, GpsJitter};
 pub use profile::{
     correlated_cadence_profile, correlated_speed_profile, cumulative, interp_cum, time_grid,

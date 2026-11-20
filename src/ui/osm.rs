@@ -90,7 +90,7 @@ impl App {
             ui.add_sized(
                 [path_width, 26.0],
                 egui::TextEdit::singleline(&mut self.osm_page.path)
-                    .hint_text("拖入 .osm 文件或填写路径"),
+                    .hint_text("拖入 .osm / .json(GeoJSON) 文件或填写路径"),
             );
             ui.add_space(4.0);
             load_now |= ui
@@ -106,7 +106,7 @@ impl App {
                 ui.add_sized(
                     [340.0, 26.0],
                     egui::TextEdit::singleline(&mut self.osm_page.path)
-                        .hint_text("拖入 .osm 文件或填写路径"),
+                        .hint_text("拖入 .osm / .json(GeoJSON) 文件或填写路径"),
                 );
                 load_now |= self.osm_file_buttons(ui);
             });

@@ -47,7 +47,8 @@ impl RouteMode {
 /// 从本地文件加载 OSM 路网。
 pub fn load_network_path(path: &str) -> Result<RoadGraph, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("读取 {path} 失败: {e}"))?;
-    route_planner::load_osm(&bytes)
+    // 支持 .osm/.xml（OSM XML）与 .json/.geojson（GeoJSON / Overpass / 通用 nodes+ways）
+    route_planner::load_auto(&bytes, path)
 }
 
 /// 路网预览计划（供地图显示）：对齐后的路网/建筑 + 生成的路线（BD 系）。

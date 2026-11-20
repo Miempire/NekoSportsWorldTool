@@ -304,7 +304,8 @@ public final class MainActivity extends NativeActivity {
             intent.addCategory(android.content.Intent.CATEGORY_OPENABLE);
             intent.setType("*/*");
             intent.putExtra(android.content.Intent.EXTRA_MIME_TYPES, new String[]{
-                "text/xml", "application/xml", "text/plain", "application/octet-stream"});
+                "text/xml", "application/xml", "application/json",
+                "text/plain", "application/octet-stream"});
             try {
                 startActivityForResult(intent, REQUEST_PICK_OSM);
             } catch (Exception error) {
@@ -361,7 +362,12 @@ public final class MainActivity extends NativeActivity {
             .replace('<', '_').replace('>', '_').replace('|', '_')
             .replace('\n', '_').replace('\r', '_').trim();
         if (name.isEmpty()) name = "import.osm";
-        if (!name.toLowerCase(java.util.Locale.ROOT).endsWith(".osm")) name += ".osm";
+        // 保留 osm/xml/json/geojson 扩展名：Rust 侧按后缀 + 内容嗅探选解析器
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        if (!lower.endsWith(".osm") && !lower.endsWith(".xml")
+            && !lower.endsWith(".json") && !lower.endsWith(".geojson")) {
+            name += ".osm";
+        }
         return name;
     }
 

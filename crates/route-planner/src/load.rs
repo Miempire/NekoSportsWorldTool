@@ -434,3 +434,293 @@ fn geo_haversine(a: Coord, b: Coord) -> f64 {
     let pb = geo::Point::new(b.lon, b.lat);
     pa.haversine_distance(&pb)
 }
+
+// ===================== JSON 路网（GeoJSON / Overpass / 通用 nodes+ways） =====================
+
+/// 坐标 → 节点 id 的量化去重（1e-7 度 ≈ 1.1 cm）。GeoJSON 没有节点 id，靠它生成稳定 id。
+fn node_for(
+    coord_id: &mut HashMap<(i64, i64), u64>,
+    nodes: &mut HashMap<u64, Coord>,
+    next_id: &mut u64,
+    lon: f64,
+    lat: f64,
+) -> u64 {
+    let key = (
+        (lon * 10_000_000.0).round() as i64,
+        (lat * 10_000_000.0).round() as i64,
+    );
+    if let Some(&id) = coord_id.get(&key) {
+        return id;
+    }
+    let id = *next_id;
+    *next_id += 1;
+    coord_id.insert(key, id);
+    nodes.insert(id, Coord::new(lon, lat));
+    id
+}
+
+/// 读一个 JSON 布尔标记：兼容 true / "yes" / 1。
+fn json_flag(v: &serde_json::Value, key: &str) -> bool {
+    match v.get(key) {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::String(s)) => {
+            let t = s.trim().to_ascii_lowercase();
+            t == "yes" || t == "true" || t == "1"
+        }
+        Some(serde_json::Value::Number(n)) => n.as_f64().map(|x| x != 0.0).unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn json_f64(v: &serde_json::Value, key: &str) -> Option<f64> {
+    v.get(key).and_then(|x| {
+        x.as_f64()
+            .or_else(|| x.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_geojson_line(
+    line: &serde_json::Value,
+    coord_id: &mut HashMap<(i64, i64), u64>,
+    nodes: &mut HashMap<u64, Coord>,
+    next_id: &mut u64,
+    roads: &mut Vec<OsmRoad>,
+    way_id: &mut u64,
+    highway: &str,
+    oneway: bool,
+    maxspeed: Option<f64>,
+) {
+    let Some(arr) = line.as_array() else { return };
+    let mut refs = Vec::with_capacity(arr.len());
+    for pt in arr {
+        if let Some(c) = pt.as_array() {
+            let lon = c.first().and_then(|x| x.as_f64());
+            let lat = c.get(1).and_then(|x| x.as_f64());
+            if let (Some(lon), Some(lat)) = (lon, lat) {
+                refs.push(node_for(coord_id, nodes, next_id, lon, lat));
+            }
+        }
+    }
+    if refs.len() >= 2 {
+        roads.push(OsmRoad {
+            id: *way_id,
+            node_refs: refs,
+            oneway,
+            oneway_reversed: false,
+            highway: highway.to_string(),
+            maxspeed_kmh: maxspeed,
+        });
+        *way_id += 1;
+    }
+}
+
+/// GeoJSON：FeatureCollection 里的 LineString / MultiLineString。
+fn parse_geojson(v: &serde_json::Value) -> Result<ParsedOsm, String> {
+    let mut nodes = HashMap::new();
+    let mut coord_id: HashMap<(i64, i64), u64> = HashMap::new();
+    let mut next_id: u64 = 1;
+    let mut roads = Vec::new();
+    let mut way_id: u64 = 1;
+    let features = v["features"].as_array().cloned().unwrap_or_default();
+    for feat in features {
+        let geom = &feat["geometry"];
+        let props = &feat["properties"];
+        let highway = props
+            .get("highway")
+            .and_then(|x| x.as_str())
+            .unwrap_or("footway");
+        let oneway = json_flag(props, "oneway");
+        let maxspeed = json_f64(props, "maxspeed");
+        match geom["type"].as_str() {
+            Some("LineString") => push_geojson_line(
+                &geom["coordinates"],
+                &mut coord_id,
+                &mut nodes,
+                &mut next_id,
+                &mut roads,
+                &mut way_id,
+                highway,
+                oneway,
+                maxspeed,
+            ),
+            Some("MultiLineString") => {
+                if let Some(parts) = geom["coordinates"].as_array() {
+                    for part in parts {
+                        push_geojson_line(
+                            part,
+                            &mut coord_id,
+                            &mut nodes,
+                            &mut next_id,
+                            &mut roads,
+                            &mut way_id,
+                            highway,
+                            oneway,
+                            maxspeed,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if nodes.is_empty() || roads.is_empty() {
+        return Err("GeoJSON 里没有可用的 LineString 要素".into());
+    }
+    Ok(ParsedOsm {
+        nodes,
+        roads,
+        buildings: Vec::new(),
+        tracks: Vec::new(),
+    })
+}
+
+/// Overpass API 的 JSON（`{"elements":[{"type":"node",...},{"type":"way",...}]}`）。
+fn parse_overpass(v: &serde_json::Value) -> Result<ParsedOsm, String> {
+    let mut nodes = HashMap::new();
+    let mut roads = Vec::new();
+    let elements = v["elements"].as_array().cloned().unwrap_or_default();
+    // 先收节点
+    for el in &elements {
+        if el["type"].as_str() != Some("node") {
+            continue;
+        }
+        let id = el["id"].as_u64();
+        let lat = el["lat"].as_f64();
+        let lon = el["lon"].as_f64();
+        if let (Some(id), Some(lat), Some(lon)) = (id, lat, lon) {
+            nodes.insert(id, Coord::new(lon, lat));
+        }
+    }
+    // 再收 way
+    for el in &elements {
+        if el["type"].as_str() != Some("way") {
+            continue;
+        }
+        let id = el["id"].as_u64().unwrap_or(0);
+        let refs: Vec<u64> = el["nodes"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_u64()).collect())
+            .unwrap_or_default();
+        if refs.len() < 2 {
+            continue;
+        }
+        let tags = &el["tags"];
+        let highway = tags.get("highway").and_then(|x| x.as_str()).unwrap_or("footway");
+        roads.push(OsmRoad {
+            id,
+            node_refs: refs,
+            oneway: json_flag(tags, "oneway"),
+            oneway_reversed: false,
+            highway: highway.to_string(),
+            maxspeed_kmh: json_f64(tags, "maxspeed"),
+        });
+    }
+    if nodes.is_empty() || roads.is_empty() {
+        return Err("Overpass JSON 里没有可用的 way 元素".into());
+    }
+    Ok(ParsedOsm {
+        nodes,
+        roads,
+        buildings: Vec::new(),
+        tracks: Vec::new(),
+    })
+}
+
+/// 通用路网 JSON：`{"nodes":[{"id","lat","lon"}], "ways":[{"id","nodes":[id...],"highway","oneway"}]}`
+fn parse_generic(v: &serde_json::Value) -> Result<ParsedOsm, String> {
+    let mut nodes = HashMap::new();
+    let mut roads = Vec::new();
+    for nd in v["nodes"].as_array().cloned().unwrap_or_default() {
+        let id = nd["id"]
+            .as_u64()
+            .or_else(|| nd["id"].as_str().and_then(|s| s.parse().ok()));
+        let lat = nd["lat"]
+            .as_f64()
+            .or_else(|| nd["latitude"].as_f64());
+        let lon = nd["lon"]
+            .as_f64()
+            .or_else(|| nd["lng"].as_f64())
+            .or_else(|| nd["longitude"].as_f64());
+        if let (Some(id), Some(lat), Some(lon)) = (id, lat, lon) {
+            nodes.insert(id, Coord::new(lon, lat));
+        }
+    }
+    for wy in v["ways"].as_array().cloned().unwrap_or_default() {
+        let id = wy["id"].as_u64().unwrap_or(0);
+        let refs: Vec<u64> = wy["nodes"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| {
+                        x.as_u64()
+                            .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if refs.len() < 2 {
+            continue;
+        }
+        let highway = wy["highway"].as_str().unwrap_or("footway");
+        roads.push(OsmRoad {
+            id,
+            node_refs: refs,
+            oneway: json_flag(&wy, "oneway"),
+            oneway_reversed: false,
+            highway: highway.to_string(),
+            maxspeed_kmh: json_f64(&wy, "maxspeed"),
+        });
+    }
+    if nodes.is_empty() || roads.is_empty() {
+        return Err("JSON 里 nodes/ways 为空或字段缺失".into());
+    }
+    Ok(ParsedOsm {
+        nodes,
+        roads,
+        buildings: Vec::new(),
+        tracks: Vec::new(),
+    })
+}
+
+/// 解析 JSON 路网（自动识别 GeoJSON / Overpass / 通用 nodes+ways）。
+pub fn parse_json(bytes: &[u8]) -> Result<ParsedOsm, String> {
+    let v: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|e| format!("JSON 解析失败: {e}"))?;
+    if v.get("type").and_then(|t| t.as_str()) == Some("FeatureCollection") {
+        return parse_geojson(&v);
+    }
+    if v.get("elements").is_some() {
+        return parse_overpass(&v);
+    }
+    if v.get("nodes").is_some() && v.get("ways").is_some() {
+        return parse_generic(&v);
+    }
+    Err("无法识别的 JSON 路网格式（支持 GeoJSON / Overpass / {nodes,ways}）".into())
+}
+
+/// 按扩展名 + 内容嗅探自动选择解析器：`.json` 或首字符为 `{`/`[` 走 JSON，否则按 OSM XML。
+pub fn load_auto(bytes: &[u8], path: &str) -> Result<RoadGraph, String> {
+    let lower = path.to_ascii_lowercase();
+    let looks_json = lower.ends_with(".json")
+        || lower.ends_with(".geojson")
+        || bytes
+            .iter()
+            .find(|b| !b.is_ascii_whitespace())
+            .map(|b| *b == b'{' || *b == b'[')
+            .unwrap_or(false);
+    let parsed = if looks_json {
+        parse_json(bytes)?
+    } else {
+        parse_osm(bytes)?
+    };
+    if parsed.roads.is_empty() {
+        return Err(format!(
+            "路网中没有可用道路：解析到 {} 个节点、{} 个建筑、{} 条跑道；请检查 way 的节点引用是否都能对上节点 id",
+            parsed.nodes.len(),
+            parsed.buildings.len(),
+            parsed.tracks.len()
+        ));
+    }
+    Ok(build_graph(&parsed))
+}
