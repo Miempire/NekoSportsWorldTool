@@ -34,6 +34,8 @@ fn allowed_flags(cmd: &str) -> Option<&'static [&'static str]> {
             "seed",
             "route",
             "must",
+            "mode",
+            "bowl-climb",
         ],
         "template" => &["file"],
         "ai" => &["sport", "mode", "score", "count", "minutes"],
@@ -690,6 +692,24 @@ fn cmd_run(rest: &[&str]) -> i32 {
         fmt_hms(start_ms)
     );
 
+    // 数据生成模式：--mode current|bowl|niko（仅经典路线生效），--bowl-climb 开启起始爬升
+    let track_mode = match get(&flags, "mode").map(|v| v.to_ascii_lowercase()) {
+        Some(v) if v == "current" || v == "现有" => crate::track::generator::TrackGenMode::Current,
+        Some(v) if v == "bowl" || v == "碗形" => crate::track::generator::TrackGenMode::Bowl,
+        Some(v) if v == "niko" => crate::track::generator::TrackGenMode::Niko,
+        Some(v) => {
+            eprintln!("--mode 只能是 current / bowl / niko（收到 {v}）");
+            return 1;
+        }
+        None => crate::track::generator::TrackGenMode::Current,
+    };
+    let bowl_climb = get(&flags, "bowl-climb")
+        .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+        .unwrap_or(false);
+    if bowl_climb && track_mode != crate::track::generator::TrackGenMode::Bowl {
+        eprintln!("提示：--bowl-climb 只在 --mode bowl 下生效，当前已忽略");
+    }
+
     let mut log = logger();
     let params = crate::api::flow::RunParams {
         dist,
@@ -705,8 +725,8 @@ fn cmd_run(rest: &[&str]) -> i32 {
         pace_range: Some((pace_s as f64 - 5.0, pace_s as f64 + 5.0)),
         must_limit,
         gee_window_mode: crate::api::flow::GeeWindowMode::default(),
-        track_mode: crate::track::generator::TrackGenMode::default(),
-        bowl_climb: false,
+        track_mode,
+        bowl_climb: bowl_climb && track_mode == crate::track::generator::TrackGenMode::Bowl,
     };
     match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
         Ok(out) => {

@@ -535,33 +535,57 @@ impl App {
                     ui.colored_label(theme::warn(), "（需先在「路网」页导入 OSM）");
                 }
             });
-            // 数据生成模式（只影响经典打卡点环；路网/跑道模式由路线本身决定形状）
-            mobile::row(ui, |ui| {
-                ui.label("数据生成：");
-                ui.selectable_value(
-                    &mut page.track_gen_mode,
-                    crate::track::generator::TrackGenMode::Current,
-                    "现有",
-                );
-                ui.selectable_value(
-                    &mut page.track_gen_mode,
-                    crate::track::generator::TrackGenMode::Bowl,
-                    "碗形海拔",
-                );
-                ui.selectable_value(
-                    &mut page.track_gen_mode,
-                    crate::track::generator::TrackGenMode::Niko,
-                    "Niko",
-                );
-            });
-            if page.track_gen_mode == crate::track::generator::TrackGenMode::Bowl {
+            // 数据生成模式：**只对经典打卡点环生效**。
+            // 路网/跑道模式的形状由路线本身决定，这里不再显示可选按钮（避免选了没反应）。
+            if page.route_mode == RouteMode::Legacy {
+                let mode_before = page.track_gen_mode;
                 mobile::row(ui, |ui| {
-                    ui.checkbox(&mut page.bowl_climb, "起始段先爬升");
-                    ui.small("关掉则只在中间下凹；起终点都是平的");
+                    ui.label("数据生成：");
+                    ui.selectable_value(
+                        &mut page.track_gen_mode,
+                        crate::track::generator::TrackGenMode::Current,
+                        "现有",
+                    );
+                    ui.selectable_value(
+                        &mut page.track_gen_mode,
+                        crate::track::generator::TrackGenMode::Bowl,
+                        "碗形海拔",
+                    );
+                    ui.selectable_value(
+                        &mut page.track_gen_mode,
+                        crate::track::generator::TrackGenMode::Niko,
+                        "Niko",
+                    );
                 });
+                // 换模式会改变轨迹形状与起跑点（Bowl 固定从环起点起跑）→ 预览必须重算
+                if page.track_gen_mode != mode_before {
+                    page.preview_stale = true;
+                }
+                if page.track_gen_mode == crate::track::generator::TrackGenMode::Bowl {
+                    let climb_before = page.bowl_climb;
+                    mobile::row(ui, |ui| {
+                        ui.checkbox(&mut page.bowl_climb, "起始段先爬升");
+                        ui.small("关掉则只在中间下凹；起终点都是平的");
+                    });
+                    if page.bowl_climb != climb_before {
+                        page.preview_stale = true;
+                    }
+                }
+            } else {
+                ui.small("数据生成：仅对「经典打卡点环」生效，当前路线由所选路网/跑道决定");
             }
         }
 
+        // 【缺陷修复】切换路线算法时统一作废旧预览：
+        // 之前只在「进入 Track」时清 track_preview，切回 Legacy 或 Road 时
+        // preview / map_fitted / track 状态会残留，导致地图上还画着上一次的路线。
+        if self.run_page.route_mode != prev_route {
+            self.run_page.preview_stale = true;
+            self.run_page.map_fitted = false;
+            self.run_page.preview = None;
+            self.run_page.track_preview = None;
+            self.run_page.track = TrackState::default();
+        }
         // 切换到路网/跑道模式时按需拉取电子围栏、实时点位与策略必经点（经典模式不触发）。
         if self.run_page.route_mode == RouteMode::Road && prev_route != RouteMode::Road {
             self.refresh_fence();
@@ -572,8 +596,6 @@ impl App {
             self.refresh_fence();
             self.refresh_points();
             self.refresh_policy();
-            self.run_page.track = TrackState::default();
-            self.run_page.track_preview = None;
         }
 
         ui.add_space(8.0);
