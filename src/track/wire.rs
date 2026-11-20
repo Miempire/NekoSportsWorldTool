@@ -75,7 +75,10 @@ pub fn conv_point(p: &GenPoint, start_ms: i64) -> Value {
         "locationId": "",
         "queueNum": p.queueNum,
         "radius": round_to(p.radius, 5),
-        "speed": round_to(p.speed, 2),
+        // 【真机实测】OBS 点里的 speed 是「瞬时速度 m/s × 1000」，保留 2 位小数
+        // （真机样例 714.29 / 3333.33 / 2000.0 ⇔ 2.57 / 12 / 7.2 km/h）。
+        // 而 GenPoint.speed 内部单位是 km/h，所以要 /3.6 再 ×1000。
+        "speed": round_to(p.speed / 3.6 * 1000.0, 2),
         "state": p.state,
         "stepDistance": 0.0,
         "totalDis": p.totalDis,

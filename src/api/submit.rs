@@ -136,9 +136,16 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
     let stop_ms = start_ms + total_time * 1000 + pause_extra_ms(&run_uuid);
 
     let dis_ceil = (total_dis * 100.0).ceil() / 100.0;
-    // 官方口径：speed = 配速(分/公里) × 1000（千分位分钟/公里），Android/iOS 一致。
-    let pace_min = total_time as f64 / 60.0 / (dis_ceil / 1000.0).max(0.001);
-    let speed = round_to(pace_min * 1000.0, 0) as i64;
+    // 【真机实测】提交体的 speed 口径按平台分：
+    // - Android：平均速度 m/s × 1000，保留 2 位小数
+    //   （与 OBS 点的 speed 同一量纲，真机样例 714.29 / 3333.33 / 2000.0）
+    // - iOS：配速(分/公里) × 1000，整数（旧口径，未在真机验证过改动）
+    let speed: f64 = if client.identity.platform == "android" {
+        round_to(total_dis / (total_time.max(1) as f64) * 1000.0, 2)
+    } else {
+        let pace_min = total_time as f64 / 60.0 / (dis_ceil / 1000.0).max(0.001);
+        round_to(pace_min * 1000.0, 0)
+    };
     let avg_step_freq = 1i64.max(round_to(total_steps as f64 / total_time as f64 * 60.0, 0) as i64);
 
     let mut body = Map::new();
