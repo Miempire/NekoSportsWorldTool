@@ -350,29 +350,31 @@ mod tests {
             .keys()
             .map(|s| s.as_str())
             .collect();
+        // 【真机实测】键序必须与真机逐字一致（2026-11-20 从真机上传的 COS 对象确认）
         assert_eq!(
             keys,
             vec![
-                "rrid",
                 "uid",
-                "uuid",
                 "run_data",
                 "step_freq_json",
-                "speed_json",
-                "segment_json",
-                "fixed_point_json",
-                "runFaceCheck",
                 "extension_json",
-                "laps_json"
+                "speed_json",
+                "runFaceCheck",
+                "laps_json",
+                "uuid",
+                "rrid",
+                "segment_json",
+                "fixed_point_json"
             ]
         );
         // rrid gzip 可解
+        // 【真机实测】OBS 上传发生在提交之前，那时 rrid 还不存在，字段固定写 "0"
         let raw = crate::crypto::envelope::b64_decode(obj["rrid"].as_str().unwrap()).unwrap();
         let mut dec = flate2::read::GzDecoder::new(&raw[..]);
         use std::io::Read;
         let mut s = String::new();
         dec.read_to_string(&mut s).unwrap();
-        assert_eq!(s, "1320403809");
+        assert_eq!(s, "0");
         // run_data 解包 → 27 键点集
         let raw = crate::crypto::envelope::b64_decode(obj["run_data"].as_str().unwrap()).unwrap();
         let mut dec = flate2::read::GzDecoder::new(&raw[..]);
