@@ -37,27 +37,28 @@ impl App {
 
         // 项目多选
         ui.label("项目（可多选）：");
-        egui::ScrollArea::horizontal().show(ui, |ui| {
-            ui.horizontal(|ui| {
-                for s in &self.ai_page.list {
-                    let picked = self.ai_page.picked.contains(&s.id);
-                    let response = if mobile::compact_ui(ui) {
-                        ui.add_sized(
-                            [96.0, mobile::TOUCH_HEIGHT],
-                            egui::SelectableLabel::new(picked, &s.name),
-                        )
+        // 【手势修复】不再用横向 ScrollArea：egui 的 ScrollArea 默认 drag_to_scroll=true，
+        // 横向滚动区会把纵向拖动手势也吃掉，导致本页主体列表在手机上划不动。
+        // 改成换行排布（桌面端项目多了也只是换行，不影响使用）。
+        ui.horizontal_wrapped(|ui| {
+            for s in &self.ai_page.list {
+                let picked = self.ai_page.picked.contains(&s.id);
+                let response = if mobile::compact_ui(ui) {
+                    ui.add_sized(
+                        [96.0, mobile::TOUCH_HEIGHT],
+                        egui::SelectableLabel::new(picked, &s.name),
+                    )
+                } else {
+                    ui.selectable_label(picked, &s.name)
+                };
+                if response.clicked() {
+                    if picked {
+                        self.ai_page.picked.retain(|&x| x != s.id);
                     } else {
-                        ui.selectable_label(picked, &s.name)
-                    };
-                    if response.clicked() {
-                        if picked {
-                            self.ai_page.picked.retain(|&x| x != s.id);
-                        } else {
-                            self.ai_page.picked.push(s.id);
-                        }
+                        self.ai_page.picked.push(s.id);
                     }
                 }
-            });
+            }
         });
 
         ui.add_space(6.0);
