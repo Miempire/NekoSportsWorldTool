@@ -136,17 +136,11 @@ pub fn submit_record(client: &mut ApiClient, p: &SubmitParams, log: &mut dyn FnM
     let stop_ms = start_ms + total_time * 1000 + pause_extra_ms(&run_uuid);
 
     let dis_ceil = (total_dis * 100.0).ceil() / 100.0;
-    // 【真机实测】提交体的 speed 口径按平台分，且**必须是整数**：
-    // - Android：平均速度 m/s × 1000，取整（服务端 UploadSignEntity.speed 是 int，
-    //   传小数会被 Jackson 截断，签名用 "2034" 而我们算 "2034.82" → 10501 验证签名失败）
-    // - iOS：配速(分/公里) × 1000，整数（旧口径）
-    // 注意：OBS 点里的 speed 仍是 2 位小数（那份不进签名，见 track/wire.rs）。
-    let speed: i64 = if client.identity.platform == "android" {
-        round_to(total_dis / (total_time.max(1) as f64) * 1000.0, 0) as i64
-    } else {
-        let pace_min = total_time as f64 / 60.0 / (dis_ceil / 1000.0).max(0.001);
-        round_to(pace_min * 1000.0, 0) as i64
-    };
+    // 官方口径：speed = 配速(分/公里) × 1000（千分位分钟/公里），Android/iOS 一致。
+    // 必须是整数：服务端 UploadSignEntity.speed 是 int，传小数会导致
+    // 我们算 "2034.82" 而服务端截成 "2034" → 10501 验证签名失败。
+    let pace_min = total_time as f64 / 60.0 / (dis_ceil / 1000.0).max(0.001);
+    let speed = round_to(pace_min * 1000.0, 0) as i64;
     let avg_step_freq = 1i64.max(round_to(total_steps as f64 / total_time as f64 * 60.0, 0) as i64);
 
     let mut body = Map::new();
