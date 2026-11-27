@@ -37,6 +37,7 @@ fn allowed_flags(cmd: &str) -> Option<&'static [&'static str]> {
             "mode",
             "bowl-climb",
             "bowl-altitude",
+            "record",
         ],
         "template" => &["file"],
         "ai" => &["sport", "mode", "score", "count", "minutes"],
@@ -643,6 +644,21 @@ fn cmd_run(rest: &[&str]) -> i32 {
         },
     };
 
+    // ── --record <file.json>：导入已生成的记录（跳过生成）──
+    let imported_track = match get(&flags, "record") {
+        Some(p) => match crate::track::import_record::load(p) {
+            Ok(rec) => {
+                println!("√ 已导入记录：{}", rec.summary);
+                Some(rec.track)
+            }
+            Err(e) => {
+                eprintln!("--record 导入失败：{e}");
+                return 1;
+            }
+        },
+        None => None,
+    };
+
     let dist = if dist_km > 0.0 {
         dist_km as f64 * 1000.0
     } else {
@@ -654,6 +670,11 @@ fn cmd_run(rest: &[&str]) -> i32 {
         360.0 + rand::random::<f32>() * 120.0
     };
     let dur = ((dist as f32 / 1000.0 * pace_s) as i64).max(60);
+    // 导入记录：距离与时长一律以轨迹为准
+    let (dist, dur) = match &imported_track {
+        Some(t) => (t.totalDistance, t.totalTime),
+        None => (dist, dur),
+    };
     let start_ms = match time_hm {
         // --time "HH:MM" 配合 --days-ago（0-3）
         Some((h, m)) => {
@@ -672,6 +693,11 @@ fn cmd_run(rest: &[&str]) -> i32 {
     };
     // 「开始 + 用时」不能越过当前时刻，否则提交会被服务端判为未来时间
     let start_ms = start_ms.min(now_ms() - dur * 1000 - 5_000);
+    // 导入记录：起点时间已写死在轨迹里（点的 gainTimeMs 是绝对时间）
+    let start_ms = match &imported_track {
+        Some(t) => t.startTime,
+        None => start_ms,
+    };
 
     let must_limit: Option<usize> = match get(&flags, "must") {
         Some(v) => match v.parse::<usize>() {
@@ -733,6 +759,7 @@ fn cmd_run(rest: &[&str]) -> i32 {
         track_mode,
         bowl_climb: bowl_climb && track_mode == crate::track::generator::TrackGenMode::Bowl,
         bowl_altitude,
+        imported_track,
     };
     match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
         Ok(out) => {

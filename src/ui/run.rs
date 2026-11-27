@@ -94,6 +94,12 @@ pub struct RunPage {
     pub bowl_climb: bool,
     /// 海拔是否碗形（与配速模式独立）。
     pub bowl_altitude: bool,
+    /// 导入的记录（非 None 时提交用这条轨迹，跳过生成）
+    pub imported_track: Option<crate::track::model::Track>,
+    /// 导入来源摘要（UI 展示）
+    pub imported_summary: String,
+    /// 手动填写的记录文件路径（Android 上粘贴路径）
+    pub import_path: String,
     /// 预计算方案：参数变更时重抽样，提交直接使用
     pub plan: Option<RunPlan>,
     /// 路线算法模式
@@ -582,6 +588,64 @@ impl App {
                 }
                 if page.route_mode != RouteMode::Legacy {
                     ui.small("路网/跑道：只覆盖海拔剖面，配速由路线曲率决定");
+                }
+            }
+
+            // ── 导入记录（跳过生成，直接用现成轨迹提交）──────────
+            {
+                ui.add_space(6.0);
+                let has_import = page.imported_track.is_some();
+                let summary = page.imported_summary.clone();
+                mobile::row(ui, |ui| {
+                    ui.label(if has_import { "已导入记录：" } else { "导入记录：" });
+                    if has_import {
+                        ui.colored_label(theme::plain(), &summary);
+                    } else {
+                        ui.small(if summary.is_empty() {
+                            "未导入时按上面的参数现场生成"
+                        } else {
+                            summary.as_str()
+                        });
+                    }
+                });
+                let mut do_clear = false;
+                mobile::row(ui, |ui| {
+                    ui.label("文件：");
+                    mobile::text_edit(
+                        ui,
+                        "run_import_path",
+                        &mut page.import_path,
+                        crate::platform::InputKind::Text,
+                        220.0,
+                    );
+                    if ui.button("导入").clicked() {
+                        let path = page.import_path.trim().to_string();
+                        if path.is_empty() {
+                            page.imported_summary =
+                                "请先填写记录 JSON 的完整路径（sw-control 的 run_*.json）".into();
+                        } else {
+                            match crate::track::import_record::load(&path) {
+                                Ok(rec) => {
+                                    page.imported_summary = rec.summary;
+                                    page.imported_track = Some(rec.track);
+                                    page.preview_stale = true;
+                                }
+                                Err(e) => {
+                                    page.imported_summary = format!("× 导入失败：{e}");
+                                }
+                            }
+                        }
+                    }
+                    if has_import && ui.small_button("清除").clicked() {
+                        do_clear = true;
+                    }
+                });
+                if do_clear {
+                    page.imported_track = None;
+                    page.imported_summary.clear();
+                }
+                if has_import {
+                    ui.small("导入后：距离/时长/开始时间全部以轨迹为准，不再生成，也不再抖动时间");
                 }
             }
         }
@@ -1327,6 +1391,18 @@ impl App {
         let track_mode = page.track_gen_mode;
         let bowl_climb = page.bowl_climb;
         let bowl_altitude = page.bowl_altitude;
+        // 导入记录：距离/时长以轨迹为准，并原样传给 flow
+        let imported_track_for_submit = page.imported_track.clone();
+        let (dist, dur) = match &imported_track_for_submit {
+            Some(t) => (t.totalDistance, t.totalTime),
+            None => (dist, dur),
+        };
+        // 导入记录的起点时间也必须用轨迹自带的（点的 gainTimeMs 是绝对时间）
+        let plan_start_ms = start_ms;
+        let start_ms = match &imported_track_for_submit {
+            Some(t) => t.startTime,
+            None => plan_start_ms,
+        };
         self.config.track_gen_mode = match track_mode {
             crate::track::generator::TrackGenMode::Bowl => "bowl".into(),
             crate::track::generator::TrackGenMode::Niko => "niko".into(),
@@ -1373,6 +1449,7 @@ impl App {
                 track_mode,
                 bowl_climb,
                 bowl_altitude,
+                imported_track: imported_track_for_submit,
             };
             let payload = match crate::api::flow::run_full_flow(&mut client, &params, &mut log) {
                 Ok(out) => {

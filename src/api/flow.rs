@@ -61,6 +61,10 @@ pub struct RunParams {
     pub bowl_climb: bool,
     /// 海拔是否使用碗形剖面（与配速模式独立控制）。
     pub bowl_altitude: bool,
+    /// 直接使用这条导入好的轨迹，跳过生成（`track::import_record` 的产物）。
+    ///
+    /// 非 `None` 时：距离/时长以轨迹自身为准，`route_mode` 与 `track_mode` 均忽略。
+    pub imported_track: Option<crate::track::model::Track>,
 }
 
 pub struct RunOutcome {
@@ -248,11 +252,29 @@ pub fn run_full_flow(
     }
     let v_bounds = effective_pace
         .and_then(|(a, b)| crate::track::generator::speed_bounds_from_pace(a, b));
-    // 随机 0-4 秒偏移（终端上报的 flag 与首点差 <5s），轨迹/提交/OBS/五点统一使用
-    let start_ms = params.start_ms + (rand::random::<i64>() % 5) * 1000;
+    // 随机 0-4 秒偏移（终端上报的 flag 与首点差 <5s），轨迹/提交/OBS/五点统一使用。
+    // 导入记录时时间轴已固定，不能再抖动 —— 否则提交体 startTime 与
+    // OBS 点的 gainTimeMs / flag 会对不上。
+    let start_ms = if params.imported_track.is_some() {
+        params.start_ms
+    } else {
+        params.start_ms + (rand::random::<i64>() % 5) * 1000
+    };
     // 跑区元数据：由围栏接口返回（无围栏时保持默认自由跑口径）。
     let mut area = crate::track::wire::RunAreaMeta::default();
-    let mut track = match params.route_mode {
+    let imported = params.imported_track.clone();
+    if let Some(t) = &imported {
+        log(&format!(
+            "√ [track] 使用导入的记录（跳过生成）：{} 点 / {:.2} km / {} s",
+            t.locations.len(),
+            t.totalDistance / 1000.0,
+            t.totalTime
+        ));
+    }
+    let mut track = if let Some(t) = imported {
+        t
+    } else {
+        match params.route_mode {
         RouteMode::Road => {
             let cfg = crate::api::model::load_config();
             if cfg.osm_path.is_empty() {
@@ -395,6 +417,7 @@ pub fn run_full_flow(
             params.bowl_climb,
             params.bowl_altitude,
         )?,
+        }
     };
     // 【Bowl 海拔】经典模式由 generator::build_with_mode 内部完成；
     // 路网/跑道模式的形状由路线决定，这里补一道碗形剖面覆盖。
