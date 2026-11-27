@@ -431,6 +431,10 @@ impl App {
                 bowl_altitude: config
                     .bowl_altitude
                     .unwrap_or(config.track_gen_mode == "bowl"),
+                // 导入记录相关的三个字段启动时一律为空（不持久化）
+                imported_track: None,
+                imported_summary: String::new(),
+                import_path: String::new(),
                 must_limit: config
                     .must_points_limit
                     .map(|n| n.to_string())

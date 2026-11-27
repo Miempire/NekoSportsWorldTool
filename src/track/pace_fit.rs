@@ -47,7 +47,7 @@ pub fn fit_pace_bounds(
 ) -> (usize, Vec<f64>) {
     let n = points.len();
     // 原有时间轴（相对秒）
-    let mut times: Vec<f64> = points
+    let times: Vec<f64> = points
         .iter()
         .map(|p| (p.gainTimeMs - start_ms) as f64 / 1000.0)
         .collect();
