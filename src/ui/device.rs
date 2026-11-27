@@ -15,6 +15,21 @@ const ANDROID_OS_POOL: [&str; 4] = ["12", "13", "14", "15"];
 #[derive(Default)]
 pub struct DevicePage {
     saved_flash: f32,
+    // ── 极验 geeToken 生成器 ──
+    /// 场景：4=起跑 / 6=打卡 / 7=提交
+    gt_scene: i64,
+    /// 是否连极验换服务端 token（G02…，errorCode=200）
+    gt_online: bool,
+    /// 当前 token 文本
+    gt_token: String,
+    /// 与 token 配对的 errorCode（-300 本地 / 200 服务端）
+    gt_code: i64,
+    /// 后台换取中
+    gt_busy: bool,
+    /// 状态提示
+    gt_status: String,
+    /// 后台换取结果槽（token, errorCode）或错误
+    gt_result: std::sync::Arc<std::sync::Mutex<Option<Result<(String, i64), String>>>>,
 }
 
 impl App {
@@ -309,6 +324,122 @@ impl App {
         if self.identity.platform == "android" && !self.identity.manufacturer.is_empty() {
             ui.label(format!("当前保存品牌：{}", self.identity.manufacturer));
         }
+
+        // ── 极验 geeToken ─────────────────────────────────────────
+        ui.add_space(12.0);
+        ui.separator();
+        ui.label(egui::RichText::new("极验 geeToken").strong());
+        ui.colored_label(
+            theme::text_dim(),
+            "本地生成 GEE…（errorCode=-300）；勾选「换服务端」会 POST 到 riskct.geetest.com \
+             换成 G02…（errorCode=200，有效期有限）。同一个 token 只能配对应的 errorCode。",
+        );
+
+        mobile::row(ui, |ui| {
+            ui.label("场景：");
+            ui.selectable_value(&mut page.gt_scene, 4, "起跑(4)");
+            ui.selectable_value(&mut page.gt_scene, 6, "打卡(6)");
+            ui.selectable_value(&mut page.gt_scene, 7, "提交(7)");
+        });
+        mobile::row(ui, |ui| {
+            ui.checkbox(&mut page.gt_online, "换服务端 token（联网）");
+        });
+
+        // 后台结果回填
+        if let Ok(mut slot) = page.gt_result.try_lock() {
+            if let Some(done) = slot.take() {
+                page.gt_busy = false;
+                match done {
+                    Ok((token, code)) => {
+                        page.gt_status = format!(
+                            "√ 已生成 {} 字符，errorCode={code}",
+                            token.chars().count()
+                        );
+                        page.gt_token = token;
+                        page.gt_code = code;
+                    }
+                    Err(error) => {
+                        page.gt_status = format!("× 生成失败：{error}");
+                    }
+                }
+            }
+        }
+
+        mobile::row(ui, |ui| {
+            let gen_btn = egui::Button::new(if page.gt_busy { "生成中…" } else { "生成" });
+            if ui.add_enabled(!page.gt_busy, gen_btn).clicked() {
+                self.start_geetoken(page);
+            }
+            let can_copy = !page.gt_token.is_empty();
+            if ui.add_enabled(can_copy, egui::Button::new("复制")).clicked() {
+                ui.ctx().copy_text(page.gt_token.clone());
+                page.gt_status = format!(
+                    "√ 已复制 {} 字符到剪贴板",
+                    page.gt_token.chars().count()
+                );
+            }
+            if can_copy && ui.button("清空").clicked() {
+                page.gt_token.clear();
+                page.gt_code = 0;
+                page.gt_status.clear();
+            }
+        });
+
+        if !page.gt_status.is_empty() {
+            ui.colored_label(theme::plain(), &page.gt_status);
+        }
+        if !page.gt_token.is_empty() {
+            ui.label(format!(
+                "长度 {} · errorCode {}",
+                page.gt_token.chars().count(),
+                page.gt_code
+            ));
+            // 只读多行：手机上可长按选中，配合「复制」按钮
+            let mut shown = page.gt_token.clone();
+            ui.add(
+                egui::TextEdit::multiline(&mut shown)
+                    .desired_rows(4)
+                    .desired_width(f32::INFINITY)
+                    .interactive(false),
+            );
+        }
+    }
+
+    /// 生成 geeToken：本地同步；换服务端走后台线程（联网，最长 20s）。
+    fn start_geetoken(&mut self, page: &mut DevicePage) {
+        let uid = self.session.as_ref().map(|s| s.uid).unwrap_or(0);
+        let uuid = uuid::Uuid::new_v4().to_string(); // 真机是小写
+        let scene = page.gt_scene;
+        let identity = self.identity.clone();
+
+        if !page.gt_online {
+            // 本地 token：纯 CPU，毫秒级，直接同步
+            let (token, code) = crate::geetoken::make_token(&identity, uid, &uuid, scene);
+            page.gt_status = format!(
+                "√ 本地 token {} 字符，errorCode={code}",
+                token.chars().count()
+            );
+            page.gt_token = token;
+            page.gt_code = code;
+            return;
+        }
+
+        // 换服务端：后台执行，结果写回共享槽
+        page.gt_busy = true;
+        page.gt_status = "正在向 riskct.geetest.com 换取服务端 token…".into();
+        let slot = page.gt_result.clone();
+        self.spawn_job(move |tx| {
+            let mut log = App::logger(tx);
+            let local = crate::geetoken::generate_local(&identity, uid, &uuid, scene);
+            // 服务端 token 前缀必须是 G02（对应 errorCode=200）
+            let outcome = crate::geetoken::exchange_online(&local, &mut log).map(|token| {
+                let code = crate::geetoken::code_for_token(&token);
+                (token, code)
+            });
+            if let Ok(mut guard) = slot.lock() {
+                *guard = Some(outcome);
+            }
+        });
     }
 }
 
