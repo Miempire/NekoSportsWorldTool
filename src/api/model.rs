@@ -207,9 +207,18 @@ fn load_identity_for_platform(platform: &str) -> HeaderIdentity {
         id.mac_address = crate::crypto::header::random_mac();
         dirty = true;
     }
-    let before = (id.battery.clone(), id.sensors.clone(), id.gt.clone());
+    let before = (
+        id.battery.clone(),
+        id.sensors.clone(),
+        id.gt.clone(),
+        id.build.clone(),
+    );
     refresh_derived(&mut id);
-    if before.0 != id.battery || before.1 != id.sensors || before.2 != id.gt {
+    if before.0 != id.battery
+        || before.1 != id.sensors
+        || before.2 != id.gt
+        || before.3 != id.build
+    {
         dirty = true;
     }
     if dirty {
@@ -251,6 +260,11 @@ pub fn refresh_derived(identity: &mut HeaderIdentity) {
                 identity.app_install_time.max(0),
             )
         });
+    // 老 identity.json 没有 build 字段：补一份按当前机型构造的（不做真实读取，
+    // 下次在设备页点「读取本机信息」会用真实值替换）。
+    if identity.build.is_none() {
+        identity.build = Some(crate::crypto::buildinfo::BuildFingerprint::default());
+    }
     if identity.gt.is_none() || model_changed {
         let dev = crate::geetoken::generate_dev_for(identity);
         identity.gt = Some(crate::geetoken::GtState {
@@ -287,6 +301,59 @@ pub struct RealBattery {
     pub technology: String,
 }
 
+/// Java 侧读到的 `android.os.Build` 原始值（未经清洗，可能是模拟器/魔改 prop）。
+///
+/// 所有字段可选：老版本 App 只传 manufacturer/model/os_version 时仍能工作。
+#[cfg(any(target_os = "android", test))]
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct RawBuild {
+    #[serde(default)]
+    pub fingerprint: String,
+    #[serde(default)]
+    pub sdk_int: i64,
+    #[serde(default)]
+    pub brand: String,
+    #[serde(default)]
+    pub manufacturer: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub device: String,
+    #[serde(default)]
+    pub product: String,
+    #[serde(default)]
+    pub board: String,
+    #[serde(default)]
+    pub hardware: String,
+    #[serde(default)]
+    pub soc_model: String,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default)]
+    pub build_id: String,
+    /// `Build.TIME`（毫秒）
+    #[serde(default)]
+    pub build_time: i64,
+    #[serde(default)]
+    pub tags: String,
+    #[serde(default)]
+    pub build_type: String,
+    #[serde(default)]
+    pub abilist: String,
+    #[serde(default)]
+    pub radio: String,
+    #[serde(default)]
+    pub mua: String,
+    #[serde(default)]
+    pub mem_total_mb: i64,
+    #[serde(default)]
+    pub storage_total_mb: i64,
+    #[serde(default)]
+    pub storage_avail_mb: i64,
+    #[serde(default)]
+    pub version_code: i64,
+}
+
 #[cfg(any(target_os = "android", test))]
 #[derive(Debug, serde::Deserialize)]
 pub struct DeviceInfo {
@@ -299,6 +366,9 @@ pub struct DeviceInfo {
     /// Android 端读取的真实电池；桌面端为 None。
     #[serde(default)]
     pub battery: Option<RealBattery>,
+    /// Android 端读取的 Build 指纹全集（geetoken 的 brl/build 段用它）。
+    #[serde(default)]
+    pub build: Option<RawBuild>,
 }
 
 #[cfg(any(target_os = "android", test))]
@@ -376,6 +446,51 @@ pub fn identity_with_device_info(
                 updated.app_install_time.max(0),
             )
         });
+    // Build 指纹：清洗（arm 优先 abilist / SoC 兜底 / 容器 host / 未来构建时间）后持久化。
+    // 之后 geetoken 的 brl.build 段全部取自这里，token 内不再有第二套设备信息。
+    if let Some(raw) = info.build.as_ref() {
+        // 先把回落值 clone 出来，避免 if 分支的 &String 借用和后面的 updated.build 赋值冲突
+        let brand = if raw.brand.trim().is_empty() {
+            updated.manufacturer.clone()
+        } else {
+            raw.brand.trim().to_string()
+        };
+        let manufacturer = if raw.manufacturer.trim().is_empty() {
+            updated.manufacturer.clone()
+        } else {
+            raw.manufacturer.trim().to_string()
+        };
+        let model = if raw.model.trim().is_empty() {
+            updated.device_name.clone()
+        } else {
+            raw.model.trim().to_string()
+        };
+        let fp = crate::crypto::buildinfo::BuildFingerprint::from_props(
+            &raw.fingerprint,
+            raw.sdk_int,
+            &brand,
+            &manufacturer,
+            &model,
+            &raw.device,
+            &raw.product,
+            &raw.board,
+            &raw.hardware,
+            &raw.soc_model,
+            &raw.host,
+            &raw.build_id,
+            raw.build_time / 1000,
+            &raw.tags,
+            &raw.build_type,
+            &raw.abilist,
+            &raw.radio,
+            &raw.mua,
+            raw.mem_total_mb,
+            raw.storage_total_mb,
+            raw.storage_avail_mb,
+            raw.version_code,
+        );
+        updated.build = Some(fp);
+    }
     let gt_dev = crate::geetoken::generate_dev_for(&updated);
     updated.gt = Some(crate::geetoken::GtState {
         dev: gt_dev,

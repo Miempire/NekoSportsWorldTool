@@ -30,8 +30,12 @@ pub fn bd09_to_gcj02(bd_lat: f64, bd_lng: f64) -> (f64, f64) {
 /// flate2 默认写 `OS=0xff`(unknown)，逐字节对不上，必须显式改成 0。
 /// `Compression::default()`(=6) 产生的 XFL 恰好是 0x00，无需额外处理。
 pub fn gz(data: &[u8]) -> String {
+    // 【2026-11-27 真机抓包复核】gzip 头实测 `1f8b 0800 00000000 00 ff`
+    //   → OS = 0xff（255 = unknown），这是 flate2/zlib 默认值。
+    // 之前依据 2026-11-20 那份「模拟器改位置」样本推断成 0x00（FAT），
+    // 那是错的 —— 本轮用 OnePlus PLQ110 / Android 16 / 7.4.0 的真实抓包纠正。
     let mut enc = GzBuilder::new()
-        .operating_system(0)
+        .operating_system(255)
         .write(Vec::new(), Compression::default());
     enc.write_all(data).expect("gzip 写入内存失败");
     let out = enc.finish().expect("gzip 收尾失败");
@@ -74,11 +78,13 @@ pub fn conv_point(p: &GenPoint, start_ms: i64) -> Value {
         "locType": p.locType,
         "locationId": "",
         "queueNum": p.queueNum,
-        "radius": round_to(p.radius, 5),
-        // 【真机实测】OBS 点里的 speed 是「瞬时速度 m/s × 1000」，保留 2 位小数
-        // （真机样例 714.29 / 3333.33 / 2000.0 ⇔ 2.57 / 12 / 7.2 km/h）。
-        // 而 GenPoint.speed 内部单位是 km/h，所以要 /3.6 再 ×1000。
-        "speed": round_to(p.speed / 3.6 * 1000.0, 2),
+        // 【2026-11-27 真机抓包】radius 实测 3.7900925 / 4.3353143 —— 7 位小数
+        "radius": round_to(p.radius, 7),
+        // 【2026-11-27 真机抓包】speed 实测 5.1 / 62.36 ……
+        //   量级就是 km/h 本身（起步 5.1 km/h、GPS 抖动可到 62 km/h），
+        //   不需要 /3.6×1000 换算。旧的「m/s×1000」推断来自 2026-11-20 的
+        //   模拟器样本（714.29/3333.33），已证伪。
+        "speed": round_to(p.speed, 2),
         "state": p.state,
         "stepDistance": 0.0,
         "totalDis": p.totalDis,
@@ -344,8 +350,9 @@ fn lap_json(
         "endAltAbs": round_to(end_alt, 2),
         "endAltRel": round_to(end_alt - alt0, 2),
         "flag": start_ms,
-        // 【真机实测】id 从 2 开始（首圈 id=2），lapIndex 从 1 开始
-        "id": idx + 1,
+        // 【2026-11-27 真机抓包】首圈 id=3、次圈 id=4，lapIndex 仍从 1 开始
+        //   → id = lapIndex + 2
+        "id": idx + 2,
         "isFullLap": lap_d >= 999.999,
         "lapIndex": idx,
         "step": lap_steps,

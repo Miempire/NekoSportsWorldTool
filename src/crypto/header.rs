@@ -70,6 +70,10 @@ pub struct HeaderIdentity {
     /// 极验设备档案 + 设备串 d（首次缺失时自动补齐）
     #[serde(default)]
     pub gt: Option<crate::geetoken::GtState>,
+    /// Android 真实 Build 指纹（首次读取后持久化；geetoken 的 brl/build 段用它，
+    /// 保证 token 内所有设备字段同源，不再出现 Nexus 6P / Redmi K30 那种硬编码）。
+    #[serde(default)]
+    pub build: Option<crate::crypto::buildinfo::BuildFingerprint>,
     /// 【Android 链】运行时抓到的 reqKey（必须 16B）。
     /// Android 上它每进程随机、随机源不是 /dev/urandom（lab 12k 候选暴破未命中），
     /// 静态无法推导——由抓取工具写入 identity.json，或手工填。
@@ -162,7 +166,10 @@ fn update_delay_for(device_id: &str) -> i64 {
         h ^= *b as u64;
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
-    let days = 1 + (h % 60) as i64; // 1..=60
+    // 【2026-11-27 真机抓包】OnePlus PLQ110 实测
+    //   appUpdateTime − appInstallTime = 20,345,235,977 ms ≈ 235.5 天
+    // 之前限死 1~60 天，与真机差一个数量级 → 放宽到 1~400 天。
+    let days = 1 + (h % 400) as i64; // 1..=400
     days * 86_400_000
 }
 
@@ -183,6 +190,7 @@ impl Default for HeaderIdentity {
             battery: None,
             sensors: None,
             gt: None,
+            build: None,
             android_req_key: None,
             android_key_data: None,
         }

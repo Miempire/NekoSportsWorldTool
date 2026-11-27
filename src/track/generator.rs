@@ -8,7 +8,10 @@
 //! 距离与时长无法同时满足时返回 `Err`。
 #![allow(non_snake_case)]
 
-use super::geom::{fmt_gain_time, make_point_ring, ring_point_at, round_to, to_bd, Rng, MET_PER_DEG_LAT, MET_PER_DEG_LNG};
+use super::geom::{
+    fmt_cst, make_point_ring, ring_point_at, round_to, to_bd, Rng, MET_PER_DEG_LAT,
+    MET_PER_DEG_LNG,
+};
 use super::model::{GenPoint, Segment, TenWindow, Track};
 use super::postfix::{apply_post_fixes, densify_locations};
 use route_planner::profile::{
@@ -490,7 +493,11 @@ pub fn build_with_mode(
     let alt_at = |ss: f64| {
         if bowl_altitude {
             // 归一化弧长进度 u ∈ [0,1]
-            let u = (ss / alt_len).clamp(0.0, 1.0);
+            //
+            // ★ 必须取绝对值：轨迹方向是随机的（`direction = ±1`），反向跑时
+            //   `ss` 是负数，直接 clamp(0,1) 会把整条轨迹压到 u=0，
+            //   碗形完全消失（中段甚至因为纯噪声反而比两端高）。
+            let u = (ss.abs() / alt_len).clamp(0.0, 1.0);
             // 主碗：sin²(πu) 在 u=0/1 处值与一阶导数都为 0 → 起终点水平
             let bowl = -(std::f64::consts::PI * u).sin().powi(2) * bowl_depth;
             // 起始爬升：只在 u∈[0,0.25] 抬起，之后按 (1-u) 衰减，收尾仍水平
@@ -657,7 +664,12 @@ pub fn build_with_mode(
             validTime: round_to(times[i], 0) as i64,
             steps: steps_now,
             stepDistance: round_to(step_distance, 2),
-            gainTime: fmt_gain_time(start_ms + (times[i] * 1000.0) as i64),
+            // 【2026-11-27 真机抓包】gainTime = "2026-10-26 19:46:30"（含日期），
+            //   不是纯 HH:MM:SS
+            gainTime: fmt_cst(
+                start_ms + (times[i] * 1000.0) as i64,
+                "%Y-%m-%d %H:%M:%S",
+            ),
             gainTimeMs: start_ms + (times[i] * 1000.0) as i64,
             queueNum: 0,
             coorType: "gcj02".into(),
@@ -665,7 +677,12 @@ pub fn build_with_mode(
             bdD: round_to(brg, 2),
             bdS: round_to((avg_sp * rng.uniform(0.6, 0.95)).max(0.0), 3),
             bdG: rng.choice(&[1, 1, 1, -1]),
-            count: interval_steps,
+            // 【2026-11-27 真机抓包】count 实测 46 / 56 —— 这是**步频(步/分)**，
+            //   而不是本段步数（103 个点的 count 全在 40~60 区间）。
+            count: round_to(
+                interval_steps as f64 / dt.max(1e-3) * 60.0,
+                0,
+            ) as i64,
             dtr: 0.0,
             state,
             locationId: String::new(),

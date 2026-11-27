@@ -16,7 +16,7 @@
 //! 只改时间戳（`gainTimeMs` / `totalTime` / `validTime` / `gainTime`），
 //! 并返回新的采样时间轴供上层重算 10s 窗与分段。
 
-use super::geom::{fmt_gain_time, round_to};
+use super::geom::{fmt_cst, round_to};
 use super::model::GenPoint;
 
 /// 距区间边界留 3%，避免「正好压线」又被标红。
@@ -155,7 +155,8 @@ pub fn fit_pace_bounds(
         let sec = new_times[i].round() as i64;
         p.totalTime = sec;
         p.validTime = sec;
-        p.gainTime = fmt_gain_time(ms);
+        // 真机是 "2026-10-26 19:46:30"（含日期）
+        p.gainTime = fmt_cst(ms, "%Y-%m-%d %H:%M:%S");
     }
     dt.clear();
     (moved, new_times)

@@ -150,10 +150,32 @@ mod tests {
         assert!(!is_valid_point(1, 3.0, 5.0, 20, 1, 1), "w5!=0 必须拒绝");
     }
 
+    /// `validate_series` 固定 w2=1 / w3=20：正常点的分数是 100，
+    /// 只有速度项（10 分）可能扣 → 最低 90，**仍高于阈值 65**。
+    /// 所以这里验证的是「分数如实反映扣分」，不是「一定判不通过」。
     #[test]
     fn series_validation_reports_min_score() {
-        let (ok, min) = validate_series(&[3.0, 3.1, 0.0], &[5.0, 5.0, 5.0]);
-        assert!(!ok, "有一个 0 速度点应当不通过");
-        assert!(min <= 65);
+        // 全部有速度：满分 100
+        let (ok, min) = validate_series(&[3.0, 3.1, 2.9], &[5.0, 5.0, 5.0]);
+        assert!(ok, "正常点应全部通过");
+        assert_eq!(min, 100, "满分应为 100");
+
+        // 中间一个 0 速度：丢 10 分 → 90，仍然通过（阈值 65）
+        let (ok2, min2) = validate_series(&[3.0, 0.0, 2.9], &[5.0, 5.0, 5.0]);
+        assert!(ok2, "0 速度只丢 10 分，90 仍高于阈值");
+        assert_eq!(min2, 90, "0 速度点应为 90 分");
+        assert!(min2 < min, "带 0 速度点时最低分必须变低");
+    }
+
+    /// 真正会判不通过的组合：基础分低（w3 小）+ 距离大。
+    /// `validate_series` 固定 w3=20，所以这里直接调 `is_valid_point` 验证边界。
+    #[test]
+    fn low_base_score_with_large_gap_fails() {
+        // w3=0 → w8=0，w2=1 → 30，s1=500 → 0，s0>0 → 10，合计 40 ≤ 65
+        assert_eq!(total_score(1, 3.0, 500.0, 0), 40);
+        assert!(!is_valid_point(1, 3.0, 500.0, 0, 1, 0));
+        // 同样条件但 w3=15（30 分）→ 70 > 65，通过
+        assert_eq!(total_score(1, 3.0, 500.0, 15), 70);
+        assert!(is_valid_point(1, 3.0, 500.0, 15, 1, 0));
     }
 }

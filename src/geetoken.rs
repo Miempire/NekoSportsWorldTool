@@ -326,7 +326,63 @@ fn generate_dev(
             0
         };
     }
+    // ★ 真实 Build 指纹优先（读机得来的值），覆盖按机型猜的字段。
+    //   mem/tsz/asz/bui 之前是空串/0/硬编码 408，真机全有值 —— 这也补上了
+    //   token 长度相对真机样本短 300 多字节的缺口。
+    if let Some(b) = &identity.build {
+        if !b.brand.is_empty() {
+            dev.pla = b.brand.clone();
+        }
+        if !b.model.is_empty() {
+            dev.model = b.model.clone();
+        }
+        if sdk_release_str(b.sdk_int).is_some() {
+            dev.osv = sdk_release_str(b.sdk_int).unwrap_or(dev.osv);
+        }
+        if b.mem_total_mb > 0 {
+            // 与 tsz/asz 同口径：整数 MB（模板原值是空串，真机该有值）
+            dev.mem = b.mem_total_mb.to_string();
+        }
+        if b.storage_total_mb > 0 {
+            dev.tsz = b.storage_total_mb;
+        }
+        if b.storage_avail_mb > 0 {
+            dev.asz = b.storage_avail_mb;
+        }
+        if b.version_code > 0 {
+            dev.bui = b.version_code.to_string();
+        }
+    }
     dev
+}
+
+/// SDK → 版本号（与 `crypto::buildinfo` 同口径，这里只为覆盖 `dev.osv`）。
+fn sdk_release_str(sdk: i64) -> Option<String> {
+    if sdk <= 0 {
+        return None;
+    }
+    Some(
+        match sdk {
+            21 => "5.0",
+            22 => "5.1",
+            23 => "6.0",
+            24 => "7.0",
+            25 => "7.1",
+            26 => "8.0",
+            27 => "8.1",
+            28 => "9",
+            29 => "10",
+            30 => "11",
+            // 31/32 都是 Android 12（release 字段不出现 12L）
+            31 => "12",
+            32 => "12",
+            33 => "13",
+            34 => "14",
+            35 => "15",
+            _ => return None,
+        }
+        .to_string(),
+    )
 }
 
 /// 首次生成设备串 `d`（之后必须复用）。
@@ -397,7 +453,16 @@ fn scene_payload(uid: i64, uuid: &str, scene: i64) -> String {
 }
 
 /// 组装明文 JSON（模板 + 占位符，与真机同构）。
-pub fn build_plain(run: &GtRun, state: &GtState) -> String {
+///
+/// `identity` 提供两样模板里没有的东西：
+/// · `device_id` —— `test.sh` 的 session/设备标识（旧模板残留字面量 `<DEVICE_ID>`）
+/// · `build` —— `test.brl` / `test.build` 的整段 Build 指纹
+///   （旧模板是从 Nexus 6P / Redmi K30 抄来的硬编码，与同 token 的 pla/mod/osv 矛盾）
+pub fn build_plain(
+    run: &GtRun,
+    state: &GtState,
+    identity: &crate::crypto::header::HeaderIdentity,
+) -> String {
     let dev = &state.dev;
     let d = &state.d;
     let ts_sec = run.ts_ms / 1000;
@@ -423,7 +488,63 @@ pub fn build_plain(run: &GtRun, state: &GtState) -> String {
     for (key, value) in dev.placeholders() {
         plain = plain.replace(&key, &value);
     }
+
+    // ── 设备标识 ─────────────────────────────────────────────
+    // 旧模板这里写的是字面量 `<DEVICE_ID>`，且从未被任何替换表命中
+    // —— 每条 token 的明文里都带着它，是最硬的模板指纹。
+    plain = plain.replace("{{DEVICE_ID}}", &identity.device_id);
+
+    // ── Build 指纹（同源）──────────────────────────────────────
+    // 没有 build 时用默认值兜底（桌面端 / 老 identity.json），保证不留占位符。
+    let fallback = crate::crypto::buildinfo::BuildFingerprint::default();
+    let b = identity.build.as_ref().unwrap_or(&fallback);
+    let pairs: [(&str, String); 20] = [
+        ("{{DEV_FP}}", b.fingerprint.clone()),
+        ("{{DEV_API}}", b.sdk_int.to_string()),
+        ("{{DEV_MAN}}", b.manufacturer.clone()),
+        ("{{DEV_PRO}}", b.product.clone()),
+        ("{{DEV_SOC}}", b.soc_model.clone()),
+        ("{{DEV_ABL}}", b.abilist.clone()),
+        ("{{DEV_CAI}}", b.abi.clone()),
+        ("{{DEV_RBH}}", b.host.clone()),
+        ("{{DEV_RBDU}}", (b.build_time_ms / 1000).to_string()),
+        ("{{DEV_RBD}}", b.build_date()),
+        ("{{DEV_RBDI}}", b.build_id.clone()),
+        ("{{DEV_RBI}}", b.build_id.clone()),
+        ("{{DEV_RPB}}", b.product.clone()),
+        ("{{DEV_RH}}", b.hardware.clone()),
+        ("{{DEV_RCGC}}", b.release_channel()),
+        ("{{DEV_RADIO}}", b.radio.clone()),
+        ("{{DEV_NH}}", b.host_digest()),
+        ("{{DEV_MUA}}", b.dalvik_ua()),
+        // 安装版本 / 首次安装时间：与 HTTP 头的 appInstallTime、appVersion 同源
+        ("{{DEV_LAUV}}", crate::crypto::header::ANDROID_APP_VERSION.to_string()),
+        ("{{DEV_LAUF}}", fmt_install_time(identity.app_install_time)),
+    ];
+    for (key, value) in pairs {
+        plain = plain.replace(key, &value);
+    }
+    // lut / fit 是秒级时间戳（字符串位置），与 lauf 同源
+    let lut = if identity.app_install_time > 0 {
+        (identity.app_install_time / 1000).to_string()
+    } else {
+        "1650000000".to_string()
+    };
+    plain = plain.replace("{{DEV_LUT}}", &lut);
     plain
+}
+
+/// `appInstallTime`（毫秒）→ `2022-05-10 04:00:00` 形态。
+fn fmt_install_time(ms: i64) -> String {
+    if ms <= 0 {
+        return "2022-05-10 04:00:00".into();
+    }
+    use chrono::{Local, TimeZone};
+    Local
+        .timestamp_millis_opt(ms)
+        .single()
+        .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_else(|| "2022-05-10 04:00:00".into())
 }
 
 /// 用已还原的算法加密：`plain` 是紧凑 JSON，`random4` 是 4 字节随机数。
@@ -499,7 +620,7 @@ pub fn generate_local(
 ) -> LocalToken {
     let state = ensure_state(identity);
     let run = GtRun::new(uid, uuid, scene);
-    let plain_text = build_plain(&run, &state);
+    let plain_text = build_plain(&run, &state, identity);
     let plain: serde_json::Value = serde_json::from_str(&plain_text).unwrap_or_default();
     let gee_id = plain
         .get("data")
@@ -536,7 +657,9 @@ pub fn exchange_online(local: &LocalToken, log: &mut dyn FnMut(&str)) -> Result<
         .set("AppID", GT_APP_ID)
         .set("GeeID", &local.gee_id)
         .set("Client-Type", "1")
-        .set("Content-Type", "text/plain; charset=utf-8")
+        // 【2026-11-27 真机抓包】实测 Content-Type = application/x-www-form-urlencoded
+        //   （即使 body 是 token 原文，不是表单字段，App 也这么发）
+        .set("Content-Type", "application/x-www-form-urlencoded")
         .send_bytes(local.token.as_bytes())
         .map_err(crate::api::client::ureq_err)?;
     let text = resp.into_string().unwrap_or_default();
@@ -630,7 +753,7 @@ mod tests {
         let id = identity();
         let state = ensure_state(&id);
         let run = GtRun::new(42, "U-42", 7);
-        let plain = build_plain(&run, &state);
+        let plain = build_plain(&run, &state, &id);
         // attr 只参与 sign，不明文出现在 dev 里；这里校验 sign 与设备串。
         let sign = sha256_hex(scene_payload(42, "U-42", 7).as_bytes());
         assert!(plain.contains(&sign), "明文里应含 scene payload 的签名");

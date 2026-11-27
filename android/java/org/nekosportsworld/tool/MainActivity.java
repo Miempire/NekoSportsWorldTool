@@ -50,6 +50,80 @@ public final class MainActivity extends NativeActivity {
                         info.put("manufacturer", android.os.Build.MANUFACTURER);
                         info.put("model", android.os.Build.MODEL);
                         info.put("os_version", android.os.Build.VERSION.RELEASE);
+                        // ── Build 指纹全集 ──────────────────────────────
+                        // 用途：geetoken 的 test.brl / test.build 段。原先这些字段是
+                        // 从别的机型抄来的硬编码（Nexus 6P 的 2015 构建、Redmi K30 的 UA），
+                        // 与 token 内按机型生成的 pla/mod/osv 自相矛盾。
+                        // 这里统一读「系统当前自称的值」，让整份 token 同源。
+                        try {
+                            info.put("fingerprint", android.os.Build.FINGERPRINT);
+                            info.put("sdk_int", android.os.Build.VERSION.SDK_INT);
+                            info.put("brand", android.os.Build.BRAND);
+                            info.put("device", android.os.Build.DEVICE);
+                            info.put("product", android.os.Build.PRODUCT);
+                            info.put("board", android.os.Build.BOARD);
+                            info.put("hardware", android.os.Build.HARDWARE);
+                            String soc = "";
+                            try {
+                                if (android.os.Build.VERSION.SDK_INT >= 31) {
+                                    soc = android.os.Build.SOC_MODEL;
+                                }
+                            } catch (Throwable ignoredSoc) {
+                                soc = "";
+                            }
+                            info.put("soc_model", soc);
+                            info.put("host", android.os.Build.HOST);
+                            info.put("build_id", android.os.Build.ID);
+                            info.put("build_time", android.os.Build.TIME);
+                            info.put("tags", android.os.Build.TAGS);
+                            info.put("build_type", android.os.Build.TYPE);
+                            // SUPPORTED_ABIS 首项在模拟器上是 x86_64；
+                            // Rust 侧会重排成 arm 优先（真机不会以 x86 开头）。
+                            StringBuilder abis = new StringBuilder();
+                            for (String abi : android.os.Build.SUPPORTED_ABIS) {
+                                if (abis.length() > 0) abis.append(',');
+                                abis.append(abi);
+                            }
+                            info.put("abilist", abis.toString());
+                            String radio = "";
+                            try {
+                                radio = android.os.Build.getRadioVersion();
+                            } catch (Throwable ignoredRadio) {
+                                radio = "";
+                            }
+                            info.put("radio", radio == null ? "" : radio);
+                            String agent = System.getProperty("http.agent");
+                            info.put("mua", agent == null ? "" : agent);
+                        } catch (Throwable ignoredBuild) {
+                            // Build 读取失败不影响机型/系统版本这两个必备字段。
+                        }
+                        // ── 内存 / 存储 / 版本号 ──────────────────────
+                        try {
+                            android.app.ActivityManager am =
+                                (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+                            if (am != null) {
+                                android.app.ActivityManager.MemoryInfo mi =
+                                    new android.app.ActivityManager.MemoryInfo();
+                                am.getMemoryInfo(mi);
+                                info.put("mem_total_mb", mi.totalMem / (1024 * 1024));
+                            }
+                            android.os.StatFs stat = new android.os.StatFs(
+                                android.os.Environment.getDataDirectory().getPath());
+                            info.put("storage_total_mb", stat.getTotalBytes() / (1024 * 1024));
+                            info.put("storage_avail_mb", stat.getAvailableBytes() / (1024 * 1024));
+                        } catch (Throwable ignoredMem) {
+                            // 内存/存储只用于 token 的 mem/tsz/asz，读不到就留 0。
+                        }
+                        try {
+                            android.content.pm.PackageInfo self = getPackageManager()
+                                .getPackageInfo(getPackageName(), 0);
+                            info.put("version_code",
+                                android.os.Build.VERSION.SDK_INT >= 28
+                                    ? (int) self.getLongVersionCode()
+                                    : self.versionCode);
+                        } catch (Throwable ignoredVer) {
+                            // 版本号读不到由 Rust 侧兜底。
+                        }
                         // 传感器清单：用于设备档案里的 sen 字段（模拟器检测会看这里）。
                         try {
                             android.hardware.SensorManager sensorManager =
