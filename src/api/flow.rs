@@ -213,10 +213,40 @@ pub fn run_full_flow(
         params.dur,
         route_pts.len()
     ));
-    // 瞬时速度窗口：由用户配速范围换算，避免生成配速跑出设定范围；
-    // 未提供范围时退回生成器默认宽窗口。
-    let v_bounds = params
-        .pace_range
+    // 瞬时速度窗口：**学校 policy 窗口 ∩ 用户设定范围**（谁更严用谁）。
+    // policy 的 speedTop/speedBottom 单位不固定（分/公里 或 m/s），
+    // 已在 fetch_policy 里由 api::pace_units::resolve 统一成秒/公里。
+    let effective_pace = match (pol.pace_bounds, params.pace_range) {
+        (Some((pf, ps)), Some((uf, us))) => {
+            let (uf2, us2) = if uf <= us { (uf, us) } else { (us, uf) };
+            // 交集：最快取更慢的那个，最慢取更快的那个
+            let fast = pf.max(uf2);
+            let slow = ps.min(us2);
+            if slow > fast {
+                Some((fast, slow))
+            } else {
+                // 用户范围与学校窗口完全不相交 → 用学校窗口（否则必然被判无效）
+                log(&format!(
+                    "⚠ [policy] 用户配速 {:.0}~{:.0}s/km 与学校窗口 {}~{} km/配速不相交，改用学校窗口",
+                    uf2, us2,
+                    crate::api::pace_units::fmt_pace(pf),
+                    crate::api::pace_units::fmt_pace(ps)
+                ));
+                Some((pf, ps))
+            }
+        }
+        (Some(pb), None) => Some(pb),
+        (None, Some(pb)) => Some(pb),
+        (None, None) => None,
+    };
+    if let Some((f, s)) = effective_pace {
+        log(&format!(
+            "[policy] 有效配速窗口 {} ~ {} /km",
+            crate::api::pace_units::fmt_pace(f),
+            crate::api::pace_units::fmt_pace(s)
+        ));
+    }
+    let v_bounds = effective_pace
         .and_then(|(a, b)| crate::track::generator::speed_bounds_from_pace(a, b));
     // 随机 0-4 秒偏移（终端上报的 flag 与首点差 <5s），轨迹/提交/OBS/五点统一使用
     let start_ms = params.start_ms + (rand::random::<i64>() % 5) * 1000;
@@ -368,6 +398,46 @@ pub fn run_full_flow(
     };
     // 【Bowl 海拔】经典模式由 generator::build_with_mode 内部完成；
     // 路网/跑道模式的形状由路线决定，这里补一道碗形剖面覆盖。
+    // ★ 点位有效性自检（复现 libswsport.so@0x10e84 的 isValidPoint）
+    //
+    // 只做诊断、不改任何数据：把「相邻点间距 / 瞬时速度」喂给评分表，
+    // 任何一点总分 ≤ 65 就在日志里报警 —— 这类点在 App 端会被当成
+    // 「无效采集点」，是服务端判异常的一条来源。
+    {
+        let mut speeds_ms: Vec<f64> = Vec::with_capacity(track.locations.len());
+        let mut gaps: Vec<f64> = Vec::with_capacity(track.locations.len());
+        for (i, p) in track.locations.iter().enumerate() {
+            speeds_ms.push((p.speed / 3.6).max(0.0));
+            let g = if i == 0 {
+                // 首点没有前驱，用自身速度 × 采样间隔近似
+                let dt = if track.locations.len() > 1 {
+                    ((track.locations[1].gainTimeMs - p.gainTimeMs).max(1000)) as f64 / 1000.0
+                } else {
+                    1.0
+                };
+                (p.speed / 3.6).max(0.0) * dt
+            } else {
+                let a = &track.locations[i - 1];
+                crate::track::pace_fit::haversine_m(a.gLat, a.gLng, p.gLat, p.gLng)
+            };
+            gaps.push(g);
+        }
+        let (all_ok, min_score) =
+            crate::track::isvalidpoint::validate_series(&speeds_ms, &gaps);
+        if all_ok {
+            log(&format!(
+                "√ [isValidPoint] {} 个点全部通过（最低分 {} / 阈值 65）",
+                speeds_ms.len(),
+                min_score
+            ));
+        } else {
+            log(&format!(
+                "⚠ [isValidPoint] 存在低分点（最低分 {} / 阈值 65），App 端可能判为无效采集点",
+                min_score
+            ));
+        }
+    }
+
     if params.bowl_altitude && params.route_mode != RouteMode::Legacy {
         crate::track::altitude::apply_bowl_profile(&mut track, params.seed, params.bowl_climb);
         log(&format!(

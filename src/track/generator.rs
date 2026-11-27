@@ -44,6 +44,33 @@ pub fn speed_bounds_from_pace(pace_a_s_per_km: f64, pace_b_s_per_km: f64) -> Opt
     Some((v_min, v_max))
 }
 
+/// 多尺度值噪声（移植自 sw-proto `engine._noise_curve`）。
+///
+/// `cells` 个随机格点 → smoothstep 插值 → 去均值/归一化 → 乘 `amp`。
+/// 与固定周期正弦的区别：**没有固定周期**，克点数每次随机，
+/// 所以多条记录的功率谱不会出现同一组峰（固定正弦是明显的指纹）。
+fn value_noise(n: usize, cells: usize, amp: f64, rng: &mut Rng) -> Vec<f64> {
+    if n == 0 {
+        return Vec::new();
+    }
+    let cells = cells.max(2);
+    let grid: Vec<f64> = (0..=cells).map(|_| rng.gauss(0.0, 1.0)).collect();
+    let mut out = Vec::with_capacity(n);
+    let denom = (n.max(2) - 1) as f64;
+    for i in 0..n {
+        let x = i as f64 / denom * cells as f64;
+        let i0 = (x.floor() as usize).min(cells);
+        let i1 = (i0 + 1).min(cells);
+        let f = x - x.floor();
+        let s = f * f * (3.0 - 2.0 * f); // smoothstep
+        out.push(grid[i0] * (1.0 - s) + grid[i1] * s);
+    }
+    let mean = out.iter().sum::<f64>() / n as f64;
+    let var = out.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n as f64;
+    let sd = var.sqrt().max(1e-9);
+    out.iter().map(|v| (v - mean) / sd * amp).collect()
+}
+
 /// 沿闭环逐点曲率限速（向心加速度上限），供速度剖面的弯道 cap 使用。
 fn ring_speed_caps(
     dense: &[(f64, f64)],
@@ -192,7 +219,8 @@ pub fn build_with_mode(
     } else {
         rng.uniform(0.0, *arcs.last().unwrap_or(&400.0))
     };
-    let phase_v = rng.uniform(0.0, std::f64::consts::TAU);
+    // 保留抽样以维持 rng 序列（噪声模型已不需要相位）
+    let _phase_v = rng.uniform(0.0, std::f64::consts::TAU);
 
     // 采样节拍：冷启动前两次 1s 快速定位，之后 5s 定时；丢点概率下调
     // （丢点造成 10/15s 间隔是地图灰色段的主要来源）
@@ -220,21 +248,15 @@ pub fn build_with_mode(
         }
         f
     };
-    // 每次运行抽样一组波动谱参数，避免跨轨迹出现相同的功率谱峰
-    let (wp1, wp2, wp3) = (
-        rng.uniform(100.0, 140.0),
-        rng.uniform(38.0, 56.0),
-        rng.uniform(15.0, 23.0),
-    );
-    // 幅度收敛在 ±2% 量级：保留长/中/短三档起伏的形状，不再叠加出过大的配速方差
-    let (wa1, wa2, wa3) = (
-        rng.uniform(0.002, 0.006),
-        rng.uniform(0.008, 0.018),
-        rng.uniform(0.003, 0.008),
-    );
-    // 慢周期长波：真人配速是 1/f 型起伏，长周期幅度更大（180~360s、1.5~3%）。
-    let (wp4, wa4) = (rng.uniform(180.0, 360.0), rng.uniform(0.015, 0.030));
-    let phase4 = rng.uniform(0.0, std::f64::consts::TAU);
+    // ★ 多尺度值噪声（移植自 sw-proto engine._speed_profile）
+    //
+    // 无固定周期的随机过程：粗/慢/中/快四档平滑值噪声，每档格点数随机，
+    // 替代原来的四条固定周期正弦（100~140s / 38~56s / 15~23s / 180~360s）。
+    // 固定正弦的功率谱上有 4 个稳定的峰，多条记录只是相位不同 —— 那是可聚类的指纹。
+    let noise_block = value_noise(n, rng.randint(2, 4) as usize, 0.008, &mut rng);
+    let noise_slow = value_noise(n, rng.randint(4, 7) as usize, 0.012, &mut rng);
+    let noise_medium = value_noise(n, rng.randint(10, 16) as usize, 0.014, &mut rng);
+    let noise_fast = value_noise(n, rng.randint(26, 44) as usize, 0.0120, &mut rng);
     // 疲劳降速：5km 内相对起点约 -4~-9%，长距离收敛到 fat_min（相对 fat0 下降 3~10%）。
     // 同时叠加「回拨」：慢周期波谷/凹陷（相对趋势跑慢）时，疲劳负债按 τ≈50~85s
     // 缓释（回补 55~85% 的降幅），慢段结束后再以 2.5τ 缓慢消退，形成
@@ -263,10 +285,10 @@ pub fn build_with_mode(
             1.0
         };
         let wave = (1.0
-            + wa1 * (std::f64::consts::TAU * tt / wp1 + phase_v).sin()
-            + wa2 * (std::f64::consts::TAU * tt / wp2 + phase_v * 2.3).sin()
-            + wa3 * (std::f64::consts::TAU * tt / wp3 + phase_v * 3.7).sin()
-            + wa4 * (std::f64::consts::TAU * tt / wp4 + phase4).sin())
+            + noise_block[i]
+            + noise_slow[i]
+            + noise_medium[i]
+            + noise_fast[i])
             * dip_factor(tt);
         let trend = if mode == TrackGenMode::Bowl {
             // 碗形：中段比两端快 bowl_speed_depth（两端保持 1.0）
@@ -347,6 +369,36 @@ pub fn build_with_mode(
         let caps = ring_speed_caps(&dense, &arcs, &s_of, ac_max, brake, lookahead, v_hi);
         speeds = correlated_speed_profile(&build_spec(caps))?;
     }
+    // ★ 配速带等比收缩 + 瞬时上限（移植自 sw-proto engine._speed_profile）
+    //
+    // 两个真机实测结论（见 sw-proto-suite 的注释）：
+    // 1) App 的「最快配速」= min(瞬时速度)，而真机 9'00" 记录的最快配速约 8'38"，
+    //    即**瞬时速度上限只比均值快 ~4.4%**；旧上限 1.08 会造出 8'20" 的极值。
+    // 2) 逐点硬 clamp 只约束单点，不约束「10 秒窗均值」——边界附近 10 秒窗必然越界。
+    //    改成**围绕均值等比收缩** `v' = base + (v − base)·k`：均值不变，
+    //    所以平均配速/总距离分毫不动，只是波动幅度压进允许区间。
+    let base_v = dist / dur_f;
+    // 两端各留 1.5% 余量：App 按整数秒显示，贴边界会四舍五入越界
+    let lo_v = v_lo * 1.015;
+    let hi_v = (base_v * 1.044).min(v_hi) * 0.985;
+    if hi_v > lo_v {
+        let mut k_max = 1.0f64;
+        for &v in &speeds {
+            let d = v - base_v;
+            if d > 1e-9 {
+                k_max = k_max.min((hi_v - base_v) / d);
+            } else if d < -1e-9 {
+                k_max = k_max.min((lo_v - base_v) / d);
+            }
+        }
+        let k = k_max.clamp(0.0, 1.0);
+        if k < 1.0 {
+            for v in &mut speeds {
+                *v = base_v + (*v - base_v) * k;
+            }
+        }
+    }
+
     let cum_dist = cumulative(&times, &speeds, false);
     let integral_dist = *cum_dist.last().unwrap_or(&0.0);
     if (integral_dist - dist).abs() > 1.0 {
@@ -620,6 +672,20 @@ pub fn build_with_mode(
         });
         s += direction * d_step;
     }
+    // ★ 表观配速校正（移植自 sw-proto engine._fit_pace_bounds）
+    //
+    // App 的配速图按「相邻两点弦长 / 时间差」算，而我们是按弧长推进的：
+    // 折返/掉头处相邻两点落在去程/回程两条腿上，弦长只有横向间距（5~6 m），
+    // 5 秒走这么点就被画成 14'00"~16'00" → 整条记录像「配速超出学校区间」。
+    //
+    // 这里按弦长重排时间戳：只动时间、不动坐标，**总时长严格不变**。
+    // 区间由 v_bounds 反推（m/s → 秒/公里）。
+    let pace_bounds_s = v_bounds.map(|(vmin, vmax)| (1000.0 / vmax, 1000.0 / vmin));
+    let (_fit_moved, fitted_times) =
+        crate::track::pace_fit::fit_pace_bounds(&mut locs, pace_bounds_s, start_ms);
+    // 遮蔽原时间轴：下面的 10s 窗 / 60s 段都用校正后的时间
+    let times = fitted_times;
+
     // 10s 窗 / 60s 段与圈同源：全部由累计序列按时间边界插值派生
     let ten_speed: Vec<TenWindow> = windows_from_cum(&times, &cum_dist, dur_f, 10.0)
         .into_iter()

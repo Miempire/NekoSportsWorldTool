@@ -15,6 +15,7 @@ pub mod model;
 pub mod obs;
 pub mod points;
 pub mod policy;
+pub mod pace_units;
 pub mod rank;
 pub mod records;
 pub mod semester;

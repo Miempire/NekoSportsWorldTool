@@ -14,6 +14,11 @@ pub struct PolicyInfo {
     pub valid_time: i64,
     /// 必经点（BD 系，与打卡点同系），policy 响应里若有则返回。
     pub must_points: Vec<(f64, f64)>,
+    /// 学校允许的配速区间（**秒/公里**）：`(最快, 最慢)`。
+    ///
+    /// 原始字段 `runRuleModel.speedTop/speedBottom` 的单位在不同校区不同
+    /// （分/公里 或 m/s），由 [`super::pace_units::resolve`] 统一判定。
+    pub pace_bounds: Option<(f64, f64)>,
 }
 
 /// 从 policy 响应 `data` 中防御式提取必经点列表（字段名不确定，逐个尝试）。
@@ -78,5 +83,13 @@ pub fn fetch_policy(client: &mut ApiClient) -> Result<PolicyInfo, String> {
             .unwrap_or(1000),
         valid_time: rule.get("validTime").and_then(|t| t.as_i64()).unwrap_or(0),
         must_points: extract_must_points(&biz),
+        pace_bounds: crate::api::pace_units::resolve(
+            rule.get("speedTop").and_then(|t| t.as_f64()).unwrap_or(0.0),
+            rule.get("speedBottom").and_then(|t| t.as_f64()).unwrap_or(0.0),
+        )
+        .map(|(fast, slow, tag)| {
+            let _ = tag; // 单位标签只用于诊断，这里只要数值
+            (fast, slow)
+        }),
     })
 }

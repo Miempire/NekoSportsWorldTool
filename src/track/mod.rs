@@ -7,6 +7,8 @@ pub mod generate_road;
 pub mod generator;
 pub mod geom;
 pub mod model;
+pub mod isvalidpoint;
+pub mod pace_fit;
 pub mod postfix;
 pub mod wire;
 
